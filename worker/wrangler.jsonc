@@ -1,0 +1,77 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "swarm-scout-control",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-30",
+
+  // Aggregates per-contributor DHT node reports into the served pool.
+  // Requires Workers Paid: the free plan caps Cron Trigger CPU at 10ms,
+  // which is not enough for a list-merge-score pass.
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  },
+
+  "kv_namespaces": [
+    {
+      "binding": "SWARM_KV",
+      "id": "5a8ece9ea3f340d2aaf1cc08a12e3fd3"
+    }
+  ],
+
+  // One object per infohash, used to serialise health writes. KV allows
+  // only 1 write/sec to the same key on every plan, and a plain
+  // read-then-write guard in the request path does not survive
+  // concurrency — load testing measured 12.6 writes/sec to a single key
+  // and KV returning 429. A Durable Object is single-threaded per id, so
+  // the check-then-write is genuinely atomic.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "HEALTH_DO",
+        "class_name": "HealthCoalescer"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["HealthCoalescer"]
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  },
+
+  "env": {
+    // Load-testing target. Separate KV namespace so hammering it with
+    // synthetic clients never pollutes the production node pool that real
+    // clients bootstrap from.
+    "staging": {
+      "kv_namespaces": [
+        {
+          "binding": "SWARM_KV",
+          "id": "3638f7427d3a4249a890c0f94d320edd"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "HEALTH_DO",
+            "class_name": "HealthCoalescer"
+          }
+        ]
+      },
+      "migrations": [
+        {
+          "tag": "v1",
+          "new_sqlite_classes": ["HealthCoalescer"]
+        }
+      ],
+      "observability": {
+        "enabled": true
+      }
+    }
+  }
+}

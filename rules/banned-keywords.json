@@ -1,0 +1,27 @@
+{
+  "_source": "bitmagnet internal/classifier/classifier.core.yml -> keywords.banned",
+  "_repo": "https://github.com/bitmagnet-io/bitmagnet",
+  "_license": "MIT",
+  "_retrieved": "2026-08-31",
+  "_syntax": "bitmagnet keyword DSL - see contentFilter.js compileKeyword()",
+  "keywords": [
+    "pa?edo(fil*|phil*)?",
+    "preteen",
+    "pthc",
+    "ptsc",
+    "lsbar",
+    "lsm",
+    "underage",
+    "hebefilia",
+    "opva",
+    "child ?porn*",
+    "child ?lover*",
+    "porno ?child*",
+    "kidd(y*|ie*) ?porn",
+    "young ?video ?models",
+    "childfugga",
+    "kinderkutje",
+    "yvm",
+    "(#|10|11|12|13|14|15|16|17) ?y ?o"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "swarm-scout-docs",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-30",
+
+  // No KV, no Durable Objects, no cron. This serves one static document and
+  // one page, which is the entire reason it is not part of the control plane:
+  // nothing here can fail in a way that costs a client a decision.
+
+  "observability": {
+    "enabled": true
+  }
+}

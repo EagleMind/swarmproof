@@ -1,0 +1,34 @@
+# The discovery engine, as one unit.
+#
+# The engine needs UDP for the DHT and TCP/uTP for the peer wire, so it has
+# always had to run somewhere real — the same file runs on a laptop and on a
+# server, which is the point. It cannot run on a Cloudflare Worker: the
+# Workers runtime has outbound TCP but no outbound UDP, and the DHT and BEP 15
+# trackers are UDP-only. A Worker in front of this as a proxy is fine.
+#
+#   local:  docker compose up
+#   server: set ENGINE_BIND=0.0.0.0 (or leave it on loopback behind a proxy)
+#
+# There is no authentication. Exposed directly, this is a torrent client that
+# whoever finds the port can drive — put a reverse proxy in front and let it
+# own TLS, rate limiting and whatever access control you want.
+
+services:
+  engine:
+    build: .
+    container_name: swarm-scout
+    environment:
+      - SWARM_SCOUT_API=${SWARM_SCOUT_API:-}
+      # Set in the image: ENGINE_HOST=0.0.0.0, ENGINE_ALLOW_PUBLIC=1.
+      # Loopback would be unreachable from outside the container.
+      - ENGINE_PORT=8080
+    volumes:
+      - engine-state:/app/state
+    ports:
+      # Loopback by default: bind the proxy to this, not the internet. Set
+      # ENGINE_BIND=0.0.0.0 only if something else is terminating TLS.
+      - "${ENGINE_BIND:-127.0.0.1}:8080:8080"
+    restart: unless-stopped
+
+volumes:
+  engine-state:

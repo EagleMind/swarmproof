@@ -1,0 +1,43 @@
+{
+  "name": "swarm-scout",
+  "version": "2.0.0",
+  "description": "BitTorrent swarm verification and peer discovery: rank candidate swarms, prove them by asking a peer for the torrent, and stream the winner. Library + HTTP API.",
+  "keywords": [
+    "bittorrent",
+    "dht",
+    "bep51",
+    "peer-discovery",
+    "swarm-health",
+    "cloudflare-workers"
+  ],
+  "author": "Hassen Ben Mbarek",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node index.js",
+    "crawl": "node tools/crawl.mjs",
+    "smoke": "node tools/smoke-test.mjs",
+    "check-bootstrap": "node tools/check-bootstrap.mjs",
+    "bench": "node tools/benchmark.mjs",
+    "loadtest": "node tools/loadtest.mjs",
+    "worker:dev": "wrangler dev --config worker/wrangler.jsonc --local --test-scheduled",
+    "worker:deploy": "wrangler deploy --config worker/wrangler.jsonc",
+    "worker:deploy:staging": "wrangler deploy --config worker/wrangler.jsonc --env staging",
+    "docs:dev": "wrangler dev --config worker-docs/wrangler.jsonc",
+    "docs:deploy": "wrangler deploy --config worker-docs/wrangler.jsonc"
+  },
+  "dependencies": {
+    "bittorrent-dht": "^11.0.12",
+    "bittorrent-tracker": "^11.2.3",
+    "mime-types": "^3.0.2",
+    "webtorrent": "^3.0.21"
+  },
+  "devDependencies": {
+    "wrangler": "^4.127.1"
+  }
+}
