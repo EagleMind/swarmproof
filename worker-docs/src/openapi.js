@@ -144,6 +144,22 @@ you run it, and these routes are served from your own \`localhost\`.
 npm install && npm start
 \`\`\`
 
+It listens on \`127.0.0.1:8080\`; \`ENGINE_PORT\` and \`ENGINE_HOST\` move it.
+Binding anything other than loopback additionally requires
+\`ENGINE_ALLOW_PUBLIC=1\`, because a reachable engine is a torrent client that
+whoever finds the port can drive — they choose the infohash and your address
+is the one that joins the swarm. There is no authentication; put a proxy in
+front if you need any.
+
+### Calling it
+
+There is no auth, no API key and no versioned header — the version is in the
+path. Every JSON response carries \`Access-Control-Allow-Origin: *\` and
+\`OPTIONS\` is answered, so a browser page can call the engine directly.
+
+An unknown path returns \`404\` with an \`endpoints\` array listing everything
+below, which makes the running engine self-describing even offline.
+
 ### Claims versus proof
 
 The single most important thing to understand here. \`claimed.seeders\` comes
@@ -346,15 +362,47 @@ next candidate is already selected.`,
         description: `Supports HTTP Range, so it seeks. Point \`mpv\`, VLC or a \`<video>\` tag at it.
 
 Bytes are released only once their piece hash verifies against the
-infohash-anchored metadata, so anything read here is the real file.`,
+infohash-anchored metadata, so anything read here is the real file.
+
+A Range request also reprioritises the piece scheduler around the requested
+offset, so seeking is a hint to the downloader and not only a read.
+
+**Only \`bytes=start-\` and \`bytes=start-end\` are parsed.** A suffix range
+(\`bytes=-500\`) does not match, and the response is a \`206\` covering the
+whole file rather than the last 500 bytes. Ask for an explicit start offset.`,
         operationId: 'stream',
         parameters: [
           { name: 'Range', in: 'header', required: false, schema: { type: 'string' }, example: 'bytes=0-262143' }
         ],
         responses: {
-          200: { description: 'The whole file.', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } },
-          206: { description: 'Partial content.', content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } } },
-          404: { description: 'Nothing is playing.' }
+          200: {
+            description: 'The whole file. No `Range` was sent.',
+            headers: {
+              'Accept-Ranges': { schema: { type: 'string' }, description: 'Always `bytes`.' },
+              'Content-Type': { schema: { type: 'string' }, description: 'Guessed from the file name; `application/octet-stream` when unknown.' }
+            },
+            content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }
+          },
+          206: {
+            description: 'Partial content.',
+            headers: {
+              'Content-Range': { schema: { type: 'string' }, description: '`bytes <start>-<end>/<total>`.' },
+              'Accept-Ranges': { schema: { type: 'string' }, description: 'Always `bytes`.' }
+            },
+            content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }
+          },
+          416: {
+            description: 'The requested range starts past the end of the file, or is inverted.',
+            headers: {
+              'Content-Range': { schema: { type: 'string' }, description: '`bytes */<total>`, so a client can learn the length it should have asked within.' }
+            }
+          },
+          503: {
+            description: `Nothing is playing yet — no file has been selected. Body is \`Not ready yet\`.
+
+This is the response between \`POST /v1/play\` and \`status: "playing"\`, so
+poll \`/v1/status\` rather than treating it as an error.`
+          }
         }
       }
     },
@@ -363,9 +411,47 @@ infohash-anchored metadata, so anything read here is the real file.`,
       get: {
         tags: ['Service'],
         summary: 'Bundled fixtures',
-        description: 'Blender Foundation open movies (CC-BY), whose relative health is known in advance — so a ranking that disagrees is a bug in the scorer rather than a quiet swarm.',
+        description: `Blender Foundation open movies (CC-BY), whose relative health is known in
+advance — so a ranking that disagrees is a bug in the scorer rather than a
+quiet swarm.
+
+These are fixtures, not a catalogue. They exist so there is always something
+real and freely redistributable to point a probe at.`,
         operationId: 'presets',
-        responses: { 200: { description: 'The fixture list.' } }
+        responses: {
+          200: {
+            description: 'The fixture list.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    presets: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string' },
+                          label: { type: 'string' },
+                          year: { type: 'integer' },
+                          infoHash: { type: 'string', pattern: '^[a-f0-9]{40}$' }
+                        }
+                      }
+                    }
+                  }
+                },
+                example: {
+                  presets: [
+                    { id: 'sintel', label: 'Sintel', year: 2010, infoHash: '08ada5a7a6183aae1e09d831df6748d566095a10' },
+                    { id: 'bbb', label: 'Big Buck Bunny', year: 2008, infoHash: 'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c' },
+                    { id: 'cosmos', label: 'Cosmos Laundromat', year: 2015, infoHash: 'c9e15763f722f23e98a29decdfae341b98d53056' },
+                    { id: 'tos', label: 'Tears of Steel', year: 2012, infoHash: '209c8226b299b308beaf2b9cd3fb49212dbd13ec' }
+                  ]
+                }
+              }
+            }
+          }
+        }
       }
     },
 
@@ -399,11 +485,21 @@ infohash-anchored metadata, so anything read here is the real file.`,
   components: {
     responses: {
       BadRequest: {
-        description: 'Malformed body, or no usable candidate in it.',
+        description: `Malformed body, or no usable candidate in it. Every failure here is a
+single \`error\` string; nothing partially succeeds.
+
+Bodies over 1 MB are not read: the request stream is destroyed the moment the
+limit is passed, so expect a dropped connection rather than a tidy \`400\`.
+This is a control API that takes magnets, not an upload endpoint.`,
         content: {
           'application/json': {
             schema: { type: 'object', properties: { error: { type: 'string' } } },
-            example: { error: 'Magnet link has no xt=urn:btih: infohash' }
+            examples: {
+              noInfohash: { summary: 'A magnet with no infohash', value: { error: 'Magnet link has no xt=urn:btih: infohash' } },
+              notAMagnet: { summary: 'Neither a magnet nor an infohash', value: { error: 'Not a magnet link or a 40-character infohash' } },
+              empty: { summary: 'Nothing to work with', value: { error: 'Send { input } with a magnet link or infohash, or { candidates }' } },
+              badJson: { summary: 'Unparseable body', value: { error: 'body is not valid JSON' } }
+            }
           }
         }
       }

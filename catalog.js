@@ -1,5 +1,8 @@
 'use strict'
 
+import { decode as decodeBase32 } from '@thaunknown/thirty-two'
+import { arr2hex } from 'uint8-util'
+
 /**
  * Candidate construction: turning what a person types into something the
  * discovery layer can probe.
@@ -55,6 +58,17 @@ export const PRESETS = [
 const BTIH = /\bxt=urn:btih:([a-z0-9]{40}|[a-z2-7]{32})\b/i
 
 /**
+ * BEP 9 allows the infohash in `xt=urn:btih:` to be base32 instead of hex.
+ * Everything downstream — the DHT, trackers, `ut_metadata` verification —
+ * compares raw 20-byte infohashes, so a base32 magnet has to become the same
+ * hex string a hex magnet for the same torrent would produce, not just get
+ * lowercased and passed through.
+ */
+function toHexInfoHash (raw) {
+  return raw.length === 32 ? arr2hex(decodeBase32(raw)) : raw.toLowerCase()
+}
+
+/**
  * Accept either a full magnet URI or a bare 40-char infohash.
  * Trackers embedded in the magnet are kept and merged with the known-live
  * list, since a user-supplied magnet usually carries the trackers that
@@ -73,10 +87,11 @@ export function parseInput (raw) {
   const match = BTIH.exec(input)
   if (!match) throw new Error('Magnet link has no xt=urn:btih: infohash')
 
+  const infoHash = toHexInfoHash(match[1])
   const url = new URL(input)
-  const label = url.searchParams.get('dn') || match[1].slice(0, 8)
+  const label = url.searchParams.get('dn') || infoHash.slice(0, 8)
   const embedded = url.searchParams.getAll('tr')
   const merged = [...new Set([...embedded, ...TRACKERS])]
 
-  return { label, infoHash: match[1].toLowerCase(), magnetURI: input, trackers: merged }
+  return { label, infoHash, magnetURI: input, trackers: merged }
 }

@@ -46,8 +46,10 @@ with no website in the loop, at ~630 named torrents per minute.
 between clients — swarm health and live DHT bootstrap nodes. Unset, the client
 behaves exactly as it does offline. It accelerates; it is never a dependency.
 
-**Putting it in your own project: [USING.md](USING.md).**
-**API reference: [swarm-scout-docs.hassen-ben-mbarek.workers.dev](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev) (OpenAPI 3.1).**
+**HTTP API reference: [swarm-scout-docs.hassen-ben-mbarek.workers.dev](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev)**
+— OpenAPI 3.1, with the raw spec at `/openapi.json` if you would rather
+generate a client than read prose. Embedding it in a Node process instead:
+[As a library](#as-a-library).
 **Design, trade-offs and failure modes: [ARCHITECTURE.md](ARCHITECTURE.md).**
 
 > **Legality.** Point this at material you have the right to distribute. The
@@ -66,7 +68,7 @@ one, or holds a list of swarms and needs to know which are still alive.
 - **Health and dead-link detection for a catalogue.** An index knows what it
   lists but not what still works. Tracker counts it already has; what it cannot
   get elsewhere is whether a peer will actually answer. Read
-  [the caveat](USING.md#reading-a-result-honestly) first — claims and proof are
+  [the caveat](#reading-a-result-honestly) first — claims and proof are
   different fields, and conflating them is how a hash that does not exist gets
   a green badge.
 - **Choosing between mirrors or releases.** Five copies of one thing, one
@@ -90,7 +92,9 @@ one, or holds a list of swarms and needs to know which are still alive.
 > is healthiest*, *prove it by moving bytes* — are general, and the useful
 > application is often one nobody wrote down. If yours is not here, that is
 > much more likely a gap in the list than a limit of the tool. Read
-> [USING.md](USING.md), then judge it against your own problem.
+> [As a library](#as-a-library) and the
+> [API reference](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev), then
+> judge it against your own problem.
 
 ---
 
@@ -132,7 +136,8 @@ addresses were found but none answered. `claimed` means trackers report a swarm
 and no address was obtained: **not the same as dead**, because some healthy
 swarms have no reachable DHT presence at all. `none` means nothing anywhere.
 Results sort by verdict tier first, score second, so nothing unproven outranks
-something proven. Full contract in [USING.md](USING.md).
+something proven. Full contract in the
+[API reference](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev).
 
 No authentication — it binds loopback and holds nothing private. Exposing it
 takes `ENGINE_HOST=0.0.0.0 ENGINE_ALLOW_PUBLIC=1`, deliberately explicit,
@@ -149,6 +154,161 @@ because a public bind is a torrent client anyone who finds the port can drive.
 | `npm run check-bootstrap` | Ping every DHT bootstrap node, report which answer |
 | `npm run worker:deploy` | Deploy the control plane |
 | `npm run docs:deploy` | Deploy the OpenAPI reference |
+
+---
+
+## As a library
+
+The HTTP routes are documented in full at the
+[API reference](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev). This
+is the other half: the same capabilities inside a Node process, which is what
+[`server.js`](server.js) itself calls.
+
+```js
+import SwarmScout from 'swarm-scout'          // or './swarmScout.js'
+import { parseInput } from './catalog.js'
+
+const scout = await SwarmScout.create()
+
+const candidates = [
+  parseInput('magnet:?xt=urn:btih:08ada5a7...&dn=Sintel'),
+  parseInput('dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c')   // bare infohash also fine
+]
+
+const assessed = await scout.assess(candidates)
+for (const c of assessed) console.log(c.label, c.verdict, c.score, c.meta?.name ?? '')
+
+scout.destroy()
+```
+
+`assess(candidates, opts)` is the twin of `POST /v1/assess` and takes the same
+options — `verify` (default `true`), `maxPeers` (`40`), `concurrency` (`6`),
+`deadlineMs` (`20000`, `0` disables) — plus one the HTTP API cannot expose: a
+`table` you pass across calls so learned address liveness is shared.
+
+```js
+import { PeerTable } from './peerTable.js'
+
+const table = new PeerTable()                 // reuse for the whole sweep
+await scout.assess(batchOne, { table })
+await scout.assess(batchTwo, { table })       // skips addresses known dead
+```
+
+`rank()` is the fast half alone — scrape plus DHT lookup, no metadata fetch, no
+verdict. It returns every candidate, best first, including the ones that scored
+zero, so you apply your own cutoff rather than inheriting one:
+
+```js
+{
+  infoHash, magnetURI, label, trackers,
+  score,                 // single number, best-first ordering
+  peers: [{host, port}], // addresses actually observed
+  source: 'probed',      // or 'shared', when answered from the control plane
+  sources: {
+    seeders, leechers,   // what trackers CLAIM
+    dhtCount,            // peer addresses the DHT actually returned
+    peerWeight, locality,
+    via, fromCache, filledFromShared
+  }
+}
+```
+
+`parseInput` takes a magnet link or a 40-character infohash and merges the
+magnet's own trackers with the known-live list. Build candidates by hand if you
+prefer — the shape is `{ infoHash, magnetURI, trackers, label }`, and `label`
+is cosmetic.
+
+To verify one candidate directly, ask a peer for the torrent. `ut_metadata`
+checks SHA1(info) against the infohash before returning, which is what makes it
+proof rather than a report:
+
+```js
+import { fetchFromAny } from './metainfo.js'
+
+const meta = await fetchFromAny(infoHash, ranked[0].peers, { maxPeers: 40, table })
+if (meta?.ok) console.log(meta.name, meta.size, meta.files, meta.paths)
+```
+
+Size that peer budget to where the addresses came from. Peers from an iterative
+DHT lookup on an old swarm measured **13% TCP-connect**, so 8 peers is roughly
+one connection — a coin flip. Crawler peers, which come from the node that just
+sampled the hash, run ~34%, and 8 is plenty. Of peers that do connect, ~63%
+serve metadata.
+
+Streaming is its own object, and `play()` takes the ranked array so failover is
+automatic — if the chosen swarm stalls it drops to the next candidate. That is
+why a candidate set should be **alternate releases of the same content**:
+failover assumes any candidate substitutes for the others.
+
+```js
+import StreamServer from './streamServer.js'
+
+const server = new StreamServer()
+const port = await server.listen()
+await server.play(ranked)          // races candidates, picks the first playable
+// http://localhost:${port}/  serves it with Range support
+await server.destroy()
+```
+
+Pass `torrentFile` (a `.torrent` buffer) on a candidate and it is used instead
+of the magnet. Worth doing when you have it: a magnet needs some peer to serve
+metadata, and not every seed will — Ubuntu's official seed connects but refuses
+`ut_metadata`, so its magnet never resolves while its `.torrent` works fine.
+
+### Reading a result honestly
+
+This is the part worth slowing down for, because `score` alone will mislead
+you.
+
+`seeders`/`leechers` are **claims**. They come from a tracker scrape, which
+returns counts and no addresses, and nothing verifies them. `peers` and a
+successful metadata fetch are **proof** — a real address that completed a TCP
+handshake and served a torrent whose SHA1 matches the infohash you asked for.
+
+The current `score` weights claims heavily. That is fine for comparing
+alternate releases of one title, and actively misleading as a health badge:
+
+| Candidate | Claimed | `peers` | Verified | `score` |
+|---|---|---|---|---|
+| Ubuntu 26.04.1 desktop | 310 seeders | 0 | no | 3086 |
+| Sintel | 107 seeders | 202 | yes, streamed | 1959 |
+| A hash that does not exist | 45 seeders | 0 | no | 958 |
+
+- **Comparing releases of one title?** `score` is the right field.
+- **Deciding whether a single torrent is alive?** Use `verdict`, or
+  `peers.length` plus a metadata fetch. Never `score`.
+
+And the asymmetry that matters most: **absence of proof is not proof of
+absence.** `peers.length === 0` covers both a dead swarm and a healthy
+tracker-only one; Ubuntu is the second kind. Give it its own state in your UI
+rather than rendering it as dead, keep `claimed.seeders` visible *next to* the
+verdict rather than instead of it, and let a badge move to dead only after
+repeated failures — a single miss is often a closed DHT window.
+
+### Gotchas worth knowing up front
+
+- **A zero is ambiguous.** A failed scrape and an empty swarm both produce 0.
+  Treat "learned nothing" and "nothing there" as different states everywhere.
+- **The DHT is not universal.** Some healthy swarms have no reachable DHT
+  presence at all; Ubuntu returned 0 peers at every window up to 15 seconds
+  while Sintel saturated at 202 by 900ms. Trackers are the only path for those,
+  and a scrape gives no addresses.
+- **Do not block on `scout.ready()`** before ranking. Lookups work against a
+  partly-populated routing table; waiting costs ~5s and buys nothing.
+- **`destroy()` both** the scout and the stream server, or the process will not
+  exit.
+- **Sockets, not requests.** This opens real TCP connections to strangers.
+  Behind a restrictive firewall or CGNAT expect a much lower connect rate than
+  the numbers below.
+
+Check the whole pipeline against the real network before debugging your own
+code — control plane, ranking, a negative control that exists nowhere, metadata
+off a live peer, the content filter, and a piece-verified Range request, with
+pass/fail per stage:
+
+```bash
+node tools/real-world-test.mjs
+```
 
 ---
 
@@ -446,6 +606,33 @@ metadata fetch spends its time), [`benchmark`](tools/benchmark.mjs),
 [`loadtest`](tools/loadtest.mjs),
 [`check-bootstrap`](tools/check-bootstrap.mjs),
 [`filter-index`](tools/filter-index.mjs).
+
+---
+
+## Configuration
+
+Everything is optional — with an empty `.env` the discovery layer works exactly
+as it does with a full one. Copy [`.env.example`](.env.example) to `.env`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SWARM_SCOUT_API` | unset | Control-plane endpoint. Unset = fully local |
+| `SWARM_SCOUT_MEMBERS` | unset | `host:port,…` roster; switches to direct fleet probing |
+| `SWARM_SCOUT_MODE` | `dht` | `fleet` forces the member roster as the peer source |
+| `SWARM_SCOUT_LOCAL_CIDRS` | unset | `10.4.1.,10.4.2.` prefixes treated as rack-local |
+| `ENGINE_PORT` | `8080` | HTTP API port |
+| `ENGINE_HOST` | `127.0.0.1` | Bind address for the HTTP API |
+| `ENGINE_ALLOW_PUBLIC` | unset | Required to bind anything other than loopback |
+
+Inside a fleet, asking a public DHT about hosts you could simply connect to is
+both slower and a worse liveness signal. Set the roster and the local prefixes
+and peers are probed directly with a real handshake, with
+[`locality.js`](locality.js) weighting rack-local peers above distant ones so
+four nearby seeders outrank twenty far-away ones.
+
+The remaining knobs are constants at the top of their own modules rather than
+environment variables, because changing one is a decision that wants the
+comment next to it:
 
 ---
 
