@@ -140,6 +140,15 @@ completing a real handshake and pulling metadata.
 It does **not** tell you what exists or find a title by name. That is a
 catalogue; this is the discovery layer underneath one. You bring the infohash.
 
+> **Looking for the crawler?** swarmproof also has a BEP 51 DHT crawler that
+> harvests infohashes and resolves their names at ~630/minute — but it has no
+> endpoint here, on purpose. It is a long-running process that writes a local
+> SQLite index, not a request/response API, and nothing below reads that index.
+> It runs from the CLI (\`npm run crawl\`) on a machine you control, and it is
+> not part of the hosted deployment. See
+> [the crawler section of the README](https://github.com/EagleMind/swarmproof#the-crawler)
+> and §8 of ARCHITECTURE.md.
+
 ### Two ways to call this
 
 **Hosted** — \`https://swarmproof-api.hassen-ben-mbarek.workers.dev\`. No

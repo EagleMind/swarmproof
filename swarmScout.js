@@ -624,7 +624,18 @@ export default class SwarmScout {
   async assess (candidates, {
     verify = true, maxPeers = 40, deadlineMs = 20_000, concurrency = 6, table = null
   } = {}) {
-    const ranked = await this.rank(candidates)
+    // Shared health can answer a *ranking* without touching the DHT, and for
+    // rank() that is the whole point. For verification it is worse than
+    // useless: the control plane deliberately never stores peer lists (a
+    // routing node is infrastructure, a peer address is a record of who was
+    // transferring what), so an answer from shared health arrives with
+    // `peers: []` and there is nothing to ask for the torrent. Left alone,
+    // every candidate the control plane covers came back `claimed` — the
+    // verdict that means "trackers say yes, nothing was proven" — and the
+    // failure looked exactly like a legitimately unprovable swarm.
+    //
+    // So verification forces a real probe. Ranking keeps its shortcut.
+    const ranked = await this.rank(candidates, { sharedFirst: !verify })
     // Shared across candidates on purpose: address liveness is a property of
     // the address, not of the hash it was found under, so what one candidate
     // learns about a dead peer saves the next one a connection.
