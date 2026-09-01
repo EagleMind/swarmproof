@@ -13,66 +13,93 @@ instead of trusting a seeder count that nothing ever checked.**
 
 ---
 
-## What it does
-
-Give it an infohash. It opens a real connection to a real peer, asks for the
-torrent, and checks that `SHA1(info)` matches what you asked for. If that
-succeeds the swarm is **provably** alive — not reported alive, proven.
-
-That distinction is the entire point. A tracker scrape returns a number with no
-addresses behind it and nothing verifies it. Measured against the live network,
-an infohash that **has never existed** reported 45 seeders and 459 leechers,
-because hundreds of broken clients announce to that placeholder hash — and it
-out-scored a torrent that streams fine. Any system treating seeder counts as
-liveness will happily show that hash a green badge.
-
-swarmproof returns four verdicts instead, so a caller can tell what was
-established from what was merely claimed:
-
-| verdict | meaning |
-|---|---|
-| `verified` | a peer served the real torrent, SHA1-matched — cannot be faked |
-| `reachable` | peer addresses found, none served metadata |
-| `claimed` | trackers report a swarm, no address was obtained |
-| `none` | no signal anywhere |
-
-It is a **peer-discovery layer** — no indexer, no catalogue, no content, and no
-way to search for a title by name. You bring the infohash.
-
-## The four capabilities
-
-**Ranks candidate swarms.** A tracker scrape (BEP 15) and a live DHT
-`get_peers` lookup per candidate, each under its own deadline, scored on
-`seeders × 10 + dhtPeers × 4 + leechers` and weighted by how reachable each
-peer actually is. A cold decision takes ~900ms, and the ranked list doubles as
-the failover order.
-
-**Streams the winner.** A seekable HTTP range server with a deadline-aware
-piece scheduler: first and last chunks forced, because MP4 `moov` atoms live at
-the end, and a critical window that follows the playhead on every request. If a
-swarm dies mid-playback the next candidate is already chosen.
-
-**Learns the network from the network.** A BEP 51 crawler samples infohashes
-directly from DHT nodes and resolves their names over BEP 9, building an index
-with no website in the loop, at ~630 named torrents per minute.
-
-**Optionally shares what it learned.** A Cloudflare Worker acts as memory
-between clients — swarm health and live DHT bootstrap nodes. Unset, the client
-behaves exactly as it does offline. It accelerates; it is never a dependency.
-
-**Try it without installing anything:**
+## See it in ten seconds
 
 ```bash
-curl -X POST https://swarmproof-api.hassen-ben-mbarek.workers.dev/v1/assess \
-  -H 'content-type: application/json' \
-  -d '{"presets":true}'
+git clone https://github.com/EagleMind/swarmproof.git
+cd swarmproof && npm install && npm run prove-it
 ```
 
-**HTTP API reference: [swarmproof-docs.hassen-ben-mbarek.workers.dev](https://swarmproof-docs.hassen-ben-mbarek.workers.dev)**
-— OpenAPI 3.1, with the raw spec at `/openapi.json` if you would rather
-generate a client than read prose. Embedding it in a Node process instead:
-[As a library](#as-a-library).
-**Design, trade-offs and failure modes: [ARCHITECTURE.md](ARCHITECTURE.md).**
+It runs against the hosted API, so nothing needs to be configured and no
+engine needs to be running.
+
+Two infohashes. One is a real film. The other has never existed — it is the
+junk drawer of the BitTorrent DHT, and broken clients announce to it around
+the clock. Here is what the public trackers say about each:
+
+```
+  WHAT THE TRACKERS CLAIM  — a number nothing verifies
+
+    A hash that has never existed         38 seeders    663 leechers   1128 peers seen
+    Sintel (2010, CC-BY)                 114 seeders     76 leechers    381 peers seen
+```
+
+The hash that cannot exist reports **three times as many peers** as the film
+that does. No seeder count, no peer count, and no combination of the two
+separates them. Now ask a peer for the actual torrent:
+
+```
+  WHAT A PEER ACTUALLY SERVED  — SHA1(info) checked against the hash
+
+    A hash that has never existed       UNPROVEN   refuted — 1128 peers asked, none had it
+    Sintel (2010, CC-BY)                  PROVEN   Sintel · 129 MB · 11 files
+```
+
+That is the whole idea. Every health signal in this ecosystem is a number
+someone reported. This one is a file a peer handed over, hashed, and checked.
+
+---
+
+## The four verdicts
+
+Not two. Two of these look like failure and are not, and collapsing them is
+how a working torrent gets hidden — or a nonexistent one gets a green badge.
+
+| verdict | what was established | safe to call dead? |
+|---|---|---|
+| `verified` | a peer served the real torrent, SHA1-matched | it is alive |
+| `reachable` | addresses found, none served metadata in time | **no** — unknown |
+| `claimed` | trackers report a swarm, no address obtained | **no** — some healthy torrents live here permanently |
+| `none` | no signal anywhere | only after repeated checks |
+
+A `reachable` result that carries `refuted: true` is the strong one: peers
+were found *and asked*, and none of them had it. That is evidence of absence
+rather than absence of evidence, and it is the only thing that separates a
+real swarm from a hash people merely announce to. Its score is damped and it
+sorts below `claimed`, because having looked and found nothing is a worse
+sign than not having looked.
+
+Results sort by verdict tier first and score second, so nothing unproven can
+outrank something proven.
+
+> **`score` orders candidates. It never establishes that one is alive.** It
+> weights tracker claims heavily and those are unverifiable by construction.
+> Comparing releases of one title? Use `score`. Deciding whether a single
+> torrent is alive? Use `verdict`, never `score`.
+
+---
+
+## Who this is for
+
+You are distributing something over BitTorrent and need to know the swarm is
+alive **before** you tell people to download it:
+
+- **Release and CI pipelines.** You publish Linux images, game patches, model
+  weights or datasets by torrent. Verify the swarm is servable before the
+  announcement goes out, and alert when it decays.
+- **Catalogue and index operators.** You list torrents you did not create. You
+  already have tracker counts; what you cannot get anywhere else is whether a
+  peer will actually answer. Dead-link sweeps, honestly badged.
+- **Archives and preservation.** Watch whether a preserved collection still
+  has a servable swarm, and get warned before the last seed disappears.
+- **Fleet and internal distribution.** Images and datasets across a cluster,
+  weighted so rack-local peers beat distant ones and cross-AZ egress stays
+  down.
+- **Anyone choosing between mirrors.** Five copies of one thing, one decision
+  in about a second, and the ranking doubles as the failover order.
+
+It is a **peer-discovery layer**: no indexer, no catalogue, no content, and no
+way to search for a title by name. You bring the infohash.
 
 > **Legality.** Point this at material you have the right to distribute. The
 > bundled fixtures are Blender Foundation open movies (CC-BY). The crawler
@@ -82,43 +109,6 @@ generate a client than read prose. Embedding it in a Node process instead:
 
 ---
 
-## Where you'd use it
-
-Anywhere something holds several addresses for the same bytes and has to pick
-one, or holds a list of swarms and needs to know which are still alive.
-
-- **Health and dead-link detection for a catalogue.** An index knows what it
-  lists but not what still works. Tracker counts it already has; what it cannot
-  get elsewhere is whether a peer will actually answer. Read
-  [the caveat](#reading-a-result-honestly) first — claims and proof are
-  different fields, and conflating them is how a hash that does not exist gets
-  a green badge.
-- **Choosing between mirrors or releases.** Five copies of one thing, one
-  decision, ~900ms, and the ranking doubles as the failover order.
-- **Playback that survives a dying swarm.** Seekable HTTP range streaming with
-  the next candidate already chosen.
-- **Internal distribution.** Images, models, datasets across a fleet, weighted
-  so rack-local peers beat distant ones and cross-AZ egress stays down.
-- **Archival monitoring.** Watch whether a preserved collection still has
-  seeders, and alert when one is about to disappear.
-- **Deciding P2P versus origin.** Fall back to your CDN when the swarm cannot
-  carry the load, instead of discovering it mid-transfer.
-- **Measuring the network itself.** Swarm health, DHT reachability, peer
-  liveness — the crawler and the probe tools are instruments as much as
-  features.
-- **Bootstrapping an index with no website in the loop**, via the
-  [BEP 51 crawler](#the-crawler).
-
-> **Keep an open mind.** This list is what has been thought of so far, not a
-> boundary. The primitives underneath — *is this swarm alive*, *which of these
-> is healthiest*, *prove it by moving bytes* — are general, and the useful
-> application is often one nobody wrote down. If yours is not here, that is
-> much more likely a gap in the list than a limit of the tool. Read
-> [As a library](#as-a-library) and the
-> [API reference](https://swarmproof-docs.hassen-ben-mbarek.workers.dev), then
-> judge it against your own problem.
-
----
 
 ## Quick start
 
@@ -160,13 +150,7 @@ const scout = await SwarmScout.create()
 const [best] = await scout.assess(candidates)   // verdict, meta, score
 ```
 
-**Four verdicts, not two.** `verified` means a peer served the real torrent and
-SHA1 matched — the only signal here that cannot be faked. `reachable` means
-addresses were found but none answered. `claimed` means trackers report a swarm
-and no address was obtained: **not the same as dead**, because some healthy
-swarms have no reachable DHT presence at all. `none` means nothing anywhere.
-Results sort by verdict tier first, score second, so nothing unproven outranks
-something proven. Full contract in the
+Full contract in the
 [API reference](https://swarmproof-docs.hassen-ben-mbarek.workers.dev).
 
 No authentication — it binds loopback and holds nothing private. Exposing it
@@ -175,7 +159,9 @@ because a public bind is a torrent client anyone who finds the port can drive.
 
 | Command | What it does |
 |---|---|
+| `npm run prove-it` | The demonstration above, against the live network |
 | `npm start` | The engine as an HTTP service on `:8080` |
+| `npm run e2e` | Exercise the deployed API end to end, with a full wire trace |
 | `npm run demo` | Rank the example candidates and stream the winner |
 | `npm run crawl` | Run the BEP 51 crawler (`-- --stats`, `-- --search "…"`) |
 | `npm run smoke` | End-to-end: rank → stream → exercise Range requests and seeking |
@@ -435,7 +421,15 @@ The control plane, driven by synthetic clients:
 
 ---
 
-## The crawler
+## Also in here
+
+The two sections below are real, working, and **not what this project is
+for**. They exist because each answers a question the core one raised, and
+neither is deployed on the hosted endpoint: the crawler has no API route at
+all, and the streaming routes return `501` there. Skip both unless you
+specifically want them.
+
+### The crawler
 
 The DHT is a hash table, not a search engine. `get_peers` resolves an infohash
 you already have; there is no query for *the film called Sintel*.

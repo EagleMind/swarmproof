@@ -43,7 +43,25 @@ const candidateSchema = {
     magnetURI: { type: 'string' },
     verdict: { type: 'string', enum: ['verified', 'reachable', 'claimed', 'none'], nullable: true, description: VERDICT_DESCRIPTION },
     verified: { type: 'boolean', nullable: true, description: 'Convenience for `verdict === "verified"`.' },
-    score: { type: 'integer', description: 'Weighted health. Ordering within a verdict tier only — never a liveness signal on its own.' },
+    score: { type: 'integer', description: 'Weighted health. Ordering within a verdict tier only — never a liveness signal on its own. Damped to a tenth when `refuted` is true.' },
+    refuted: {
+      type: 'boolean',
+      nullable: true,
+      description: `A real sample of peers was asked and **none of them had this torrent** — with the
+budget intact, so this is not a timeout.
+
+This is the one field that separates a live swarm from an infohash people
+merely announce to. The all-zero placeholder hash routinely reports more
+observed peers than a genuine film and can never serve a byte; measured, 1128
+peers against Sintel's 381. Neither seeder counts nor peer counts tell them
+apart. Asking does.
+
+Three conditions must all hold, and each rejects a mitigation that fails on
+real swarms: verification actually ran, it did not time out, and at least five
+peers were tried. A refuted candidate sorts *below* \`claimed\` — having looked
+and found nothing is a worse sign than not having looked.`
+    },
+    rawScore: { type: 'integer', nullable: true, description: 'The score before any refutation damping, so the adjustment is auditable and a caller who disagrees with the policy can reconstruct the original.' },
     source: { type: 'string', enum: ['probed', 'shared'], description: '`shared` means the answer came from the control plane rather than a fresh probe.' },
     claimed: {
       type: 'object',
