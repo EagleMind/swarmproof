@@ -67,13 +67,13 @@ const LOCAL_V4 = localAddresses()
 /**
  * Operator-declared local ranges, as `a.b.c.` / `a.b.` prefixes.
  *
- *   SWARM_SCOUT_LOCAL_CIDRS=10.4.1.,10.4.2.
+ *   SWARMPROOF_LOCAL_CIDRS=10.4.1.,10.4.2.
  *
  * Prefix matching rather than real CIDR arithmetic: fleets are configured in
  * whole octets, and this avoids a dependency for something that is only ever
  * a scoring hint.
  */
-const DECLARED = String(process.env.SWARM_SCOUT_LOCAL_CIDRS || '')
+const DECLARED = String(process.env.SWARMPROOF_LOCAL_CIDRS || '')
   .split(',').map(s => s.trim()).filter(Boolean)
 
 const isV4 = host => /^\d{1,3}(\.\d{1,3}){3}$/.test(host)

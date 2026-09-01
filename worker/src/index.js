@@ -1,5 +1,5 @@
 /**
- * swarm-scout control plane
+ * swarmproof control plane
  * =========================
  *
  * Cloudflare Workers cannot participate in BitTorrent at all: `connect()`

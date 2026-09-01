@@ -1,4 +1,4 @@
-# swarm-scout architecture
+# swarmproof architecture
 
 How the Node client and the Cloudflare control plane divide the work, why
 the split is forced rather than chosen, and what it measurably buys.
@@ -7,6 +7,10 @@ the split is forced rather than chosen, and what it measurably buys.
 it is pure data plane, touches no Worker, and is documented separately
 because it answers a different question: not *which of these swarms is
 healthy* but *what is out there at all*.
+
+§1a covers a third Worker, the **front door**, which is a different kind of
+thing again: it is not part of how the software works, it is what makes one
+particular instance of it safe to point strangers at.
 
 ---
 
@@ -25,6 +29,69 @@ HTTP range server
 The client does everything that touches the BitTorrent network. The
 Worker never speaks to a peer, a tracker, or the DHT. It is shared memory
 between clients that already did that work.
+
+## 1a. The front door, and why it is not part of the engine
+
+Everything above describes software you run. The hosted endpoint at
+`swarmproof-api.hassen-ben-mbarek.workers.dev` is something else: one
+instance of that software, made safe to expose.
+
+```
+caller
+  │  no key, no signup
+  ▼
+Worker  (worker-api/)      rate limit · request caps · 60s edge cache
+  │  x-engine-secret
+  ▼
+nginx :8443 on EC2         rejects anything unsigned
+  │
+  ▼
+engine :8080, loopback     the actual BitTorrent client
+```
+
+**The engine has no authentication and deliberately never will.** It is a
+BitTorrent client with an HTTP control API; giving it a credential store
+would burden every self-hosted copy with something it does not want, and
+`server.js` refuses to bind a non-loopback address without an explicit
+`ENGINE_ALLOW_PUBLIC=1` precisely to keep that decision conscious. So the
+public-facing concerns live entirely in front of it, in a layer a
+self-hoster never deploys.
+
+**What the front door owns is bounding, not identity.** There is no API
+key, by choice. Authentication would not prevent the actual risk anyway:
+any caller, keyed or not, names the infohash, and the operator's address
+is the one that joins that swarm. What auth would add is attribution and
+revocation; what the shared instance actually needs is a ceiling. Hence
+60 requests/minute per address, 20 candidates per request, `maxPeers` ≤ 60,
+`deadlineMs` ≤ 30000, and a 60-second edge cache keyed on a hash of the
+request body.
+
+The cache costs nothing in accuracy. Swarm health moves on the order of
+minutes and §4a's own `fresh` tier is two minutes wide, so a 60s cache sits
+comfortably inside the window the client already treats as current.
+
+**Two things are load-bearing and easy to undo by accident:**
+
+- **`/v1/stream` and `/v1/play` return 501 here.** Relaying file bytes
+  through a Worker would put a media stream on Cloudflare's network for
+  content fetched from strangers — an AUP problem — and it makes the edge
+  the bottleneck in a transfer whose whole point is that it is not. The
+  measured ~2.7 MB/s streaming throughput would also clear a 100 GB/month
+  egress allowance in about ten hours. Streaming is self-host only.
+- **`ORIGIN_URL` must be a hostname.** A Workers subrequest to a bare IP
+  literal fails with Cloudflare error 1003, so the EC2 public DNS name is
+  the address that works. Give the instance an Elastic IP, or that name
+  changes on every stop/start.
+
+The origin is protected twice over: the security group admits port 8443
+only from Cloudflare's published ranges, and nginx rejects any request
+without the shared secret. Neither alone is sufficient — the security
+group cannot tell one Cloudflare customer's Worker from another's, and a
+header secret is only as private as the transport carrying it. Verified:
+direct connections to `:8443` and `:8080` from outside both hang.
+
+Deployment specifics, costs, and recovery live in
+[`deploy/README.md`](deploy/README.md).
 
 ## 2. The constraint that forces this split
 
@@ -76,7 +143,7 @@ help — and ranking is what gates playback (§6).
 
 ## 4. Worker API
 
-Deployed at `https://swarm-scout-control.hassen-ben-mbarek.workers.dev`.
+Deployed at `https://swarmproof-control.hassen-ben-mbarek.workers.dev`.
 
 | Route | Purpose |
 |---|---|
@@ -582,10 +649,10 @@ npm run worker:deploy
 ```
 
 ```bash
-npm run bench -- --api https://swarm-scout-control.hassen-ben-mbarek.workers.dev
+npm run bench -- --api https://swarmproof-control.hassen-ben-mbarek.workers.dev
 ```
 
-Point the client at the control plane with `SWARM_SCOUT_API`; unset, it is
+Point the client at the control plane with `SWARMPROOF_API`; unset, it is
 disabled entirely and the client behaves exactly as it did before this
 existed.
 

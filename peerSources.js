@@ -197,15 +197,15 @@ export class DirectPeerSource {
 /**
  * Choose a source from configuration.
  *
- * `SWARM_SCOUT_MEMBERS=host:port,host:port` switches to direct probing;
+ * `SWARMPROOF_MEMBERS=host:port,host:port` switches to direct probing;
  * absent, the DHT is used exactly as before.
  */
 export function createPeerSource ({ dht, members, mode } = {}) {
   const roster = members?.length
     ? members
-    : String(process.env.SWARM_SCOUT_MEMBERS || '').split(',').map(s => s.trim()).filter(Boolean)
+    : String(process.env.SWARMPROOF_MEMBERS || '').split(',').map(s => s.trim()).filter(Boolean)
 
-  const wanted = mode || process.env.SWARM_SCOUT_MODE ||
+  const wanted = mode || process.env.SWARMPROOF_MODE ||
     (roster.length ? 'fleet' : 'dht')
 
   if (wanted === 'fleet') {

@@ -32,7 +32,7 @@ const page = origin => `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>swarm-scout API</title>
+<title>swarmproof API</title>
 <meta name="description" content="Rank candidate BitTorrent swarms and prove them by asking a peer for the torrent.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🛰️</text></svg>">
 <style>
@@ -52,10 +52,10 @@ const page = origin => `<!doctype html>
 </head>
 <body>
 <div class="banner">
-  <strong>The engine runs on your machine.</strong>
-  There is no hosted endpoint — it is a BitTorrent client, so whoever runs it is
-  the address in the swarm. Start it with <code>npm start</code> and these
-  routes answer on <code>http://127.0.0.1:8080</code>.
+  <strong>Live at <code>swarmproof-api.hassen-ben-mbarek.workers.dev</code></strong>
+  — no key, no signup. Rate-limited to 60 requests a minute because every call
+  puts one real machine into a real swarm; the streaming routes are self-host
+  only. Run your own with <code>npm start</code> for no ceilings.
   <a href="/openapi.json">openapi.json</a>
 </div>
 <script id="api-reference" data-url="${origin}/openapi.json"></script>

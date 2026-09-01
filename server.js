@@ -249,7 +249,7 @@ const server = http.createServer(async (req, res) => {
 })
 
 server.listen(PORT, HOST, () => {
-  console.log(`swarm-scout engine on http://${HOST}:${PORT}`)
+  console.log(`swarmproof engine on http://${HOST}:${PORT}`)
   console.log(`  POST /v1/assess  - rank and verify`)
   console.log(`  POST /v1/probe   - rank only`)
   console.log(`  POST /v1/play    - stream the winner, then GET /v1/stream`)

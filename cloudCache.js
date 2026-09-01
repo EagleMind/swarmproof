@@ -3,7 +3,7 @@
 /**
  * CloudCache
  * ----------
- * Client for the swarm-scout control plane (see worker/src/index.js).
+ * Client for the swarmproof control plane (see worker/src/index.js).
  *
  * The single rule this file exists to enforce: **the control plane is an
  * accelerator, never a dependency.** Every method is capped by a short
@@ -29,12 +29,12 @@ const DEFAULT_BREAKER_MS = 10_000 // after a failure, stop calling for this long
 export default class CloudCache {
   /**
    * @param {object} opts
-   * @param {string} [opts.endpoint] - base URL, e.g. https://swarm-scout-control.workers.dev
+   * @param {string} [opts.endpoint] - base URL, e.g. https://swarmproof-control.workers.dev
    * @param {number} [opts.readTimeoutMs]
    * @param {number} [opts.nodesTimeoutMs]
    */
   constructor (opts = {}) {
-    const endpoint = opts.endpoint || process.env.SWARM_SCOUT_API || ''
+    const endpoint = opts.endpoint || process.env.SWARMPROOF_API || ''
     this.endpoint = endpoint.replace(/\/+$/, '')
     this.enabled = !!this.endpoint
     this.readTimeoutMs = opts.readTimeoutMs || DEFAULT_READ_TIMEOUT_MS

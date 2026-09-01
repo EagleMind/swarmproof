@@ -1,0 +1,37 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "swarmproof-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-30",
+
+  // The engine's address. Not a secret — the security group and the shared
+  // secret are what protect it — but it changes when the instance does, so it
+  // lives in config rather than in the source.
+  //
+  // A hostname, not the raw IP: a Workers subrequest to a bare IP literal is
+  // refused with Cloudflare error 1003, so the EC2 public DNS name is the
+  // address that actually works here.
+  "vars": {
+    "ORIGIN_URL": "http://ec2-54-196-75-118.compute-1.amazonaws.com:8443"
+  },
+
+  // ORIGIN_SECRET is set with `wrangler secret put`, never here.
+
+  // No API key means the only bound on a caller is this. 60 requests per
+  // minute per address: generous for a catalogue sweeping its own titles,
+  // and far below what it would take to make the single origin box unwell.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}

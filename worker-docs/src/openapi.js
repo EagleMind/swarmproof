@@ -1,13 +1,19 @@
 'use strict'
 
 /**
- * OpenAPI description of the swarm-scout engine API (server.js).
+ * OpenAPI description of the swarmproof engine API (server.js).
  *
- * Note what the `servers` block says: the engine runs on *your* machine.
- * This document is published by a Worker, but the Worker is not the API and
- * never sees a request for one — there is no hosted engine to call, because
- * an engine is a BitTorrent client and whoever runs it is the one in the
- * swarm. "Try it" in the reference talks to your own localhost.
+ * Two servers, and the difference between them is not cosmetic. The hosted
+ * one is a Cloudflare Worker in front of a single engine instance, and it
+ * bounds what a caller may ask for — request rate, candidates per request,
+ * peer budget — because that traffic costs one machine real bandwidth and
+ * puts its address in every swarm asked about. A self-hosted engine has none
+ * of those ceilings, and the streaming routes exist only there: file bytes
+ * are not relayed through the edge.
+ *
+ * So the hosted URL is the right default for *judging* swarms, and running
+ * your own is the answer for anything that moves data. Limits that apply to
+ * only one of them are marked **Hosted** in the route descriptions.
  *
  * Kept hand-written rather than generated. The interesting part of this API
  * is what the verdicts mean, and that is prose a generator cannot infer from
@@ -124,7 +130,7 @@ const requestBody = (extra = {}, description = 'Supply exactly one of `input`, `
 export const openapi = {
   openapi: '3.1.0',
   info: {
-    title: 'swarm-scout engine API',
+    title: 'swarmproof engine API',
     version: '2.0.0',
     summary: 'Rank candidate BitTorrent swarms, and prove them by asking a peer for the torrent.',
     description: `Given candidates you already have — magnets, infohashes, alternate releases of
@@ -134,31 +140,58 @@ completing a real handshake and pulling metadata.
 It does **not** tell you what exists or find a title by name. That is a
 catalogue; this is the discovery layer underneath one. You bring the infohash.
 
-### The engine runs on your machine
+### Two ways to call this
 
-There is no hosted endpoint. An engine is a BitTorrent client: it opens TCP
-connections to strangers, and whoever runs it is the address in the swarm. So
-you run it, and these routes are served from your own \`localhost\`.
+**Hosted** — \`https://swarmproof-api.hassen-ben-mbarek.workers.dev\`. No
+signup, no API key, nothing to configure. Start here.
 
 \`\`\`bash
-npm install && npm start
+curl -X POST https://swarmproof-api.hassen-ben-mbarek.workers.dev/v1/assess \\
+  -H 'content-type: application/json' \\
+  -d '{"input":"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10"}'
 \`\`\`
 
-It listens on \`127.0.0.1:8080\`; \`ENGINE_PORT\` and \`ENGINE_HOST\` move it.
-Binding anything other than loopback additionally requires
-\`ENGINE_ALLOW_PUBLIC=1\`, because a reachable engine is a torrent client that
-whoever finds the port can drive — they choose the infohash and your address
-is the one that joins the swarm. There is no authentication; put a proxy in
-front if you need any.
+**Self-hosted** — \`npm install && npm start\`, and the same routes answer on
+\`http://127.0.0.1:8080\`. Choose this when you need the streaming routes, want
+no ceilings, or would rather your own address be the one in the swarm.
+
+### What the hosted endpoint limits, and why
+
+An engine is a BitTorrent client. Every request makes a real machine open real
+connections to strangers, and the address that joins the swarm belongs to
+whoever runs it — here, that is one t3.small paying for your query. Hence:
+
+| Limit | Value |
+|---|---|
+| Requests per IP | 60 per minute, then \`429\` |
+| Candidates per request | 20 |
+| \`maxPeers\` ceiling | 60 |
+| \`deadlineMs\` ceiling | 30000 |
+| Identical repeat queries | served from a 60s edge cache (\`x-cache: HIT\`) |
+| \`/v1/play\`, \`/v1/stream\` | \`501\` — not relayed through the edge |
+
+None of these exist on a self-hosted engine. If you are sweeping a catalogue
+of any size, run your own — it is the same software, and the limits above are
+about protecting one shared box, not about gating a feature.
+
+The 60-second cache is not a compromise on accuracy: swarm health moves on the
+order of minutes, and the engine's own shared-health tier treats anything under
+two minutes as \`fresh\`.
 
 ### Calling it
 
-There is no auth, no API key and no versioned header — the version is in the
-path. Every JSON response carries \`Access-Control-Allow-Origin: *\` and
-\`OPTIONS\` is answered, so a browser page can call the engine directly.
+No auth, no API key, no versioned header — the version is in the path. Every
+JSON response carries \`Access-Control-Allow-Origin: *\` and \`OPTIONS\` is
+answered, so a browser page can call either endpoint directly.
 
-An unknown path returns \`404\` with an \`endpoints\` array listing everything
-below, which makes the running engine self-describing even offline.
+On a self-hosted engine an unknown path returns \`404\` with an \`endpoints\`
+array listing everything below, which makes it self-describing even offline.
+
+Self-hosting note: it binds \`127.0.0.1:8080\`, and \`ENGINE_PORT\` /
+\`ENGINE_HOST\` move it. Binding anything other than loopback additionally
+requires \`ENGINE_ALLOW_PUBLIC=1\`, because a reachable engine is a torrent
+client whoever finds the port can drive — they choose the infohash and your
+address joins the swarm. Put a proxy in front if you expose it.
 
 ### Claims versus proof
 
@@ -174,7 +207,14 @@ So \`score\` orders candidates; it does not tell you a torrent is alive. Only
   },
 
   servers: [
-    { url: 'http://127.0.0.1:8080', description: 'The engine, running on your machine (npm start)' }
+    {
+      url: 'https://swarmproof-api.hassen-ben-mbarek.workers.dev',
+      description: 'Hosted. No key required; rate-limited, and the streaming routes are not available here.'
+    },
+    {
+      url: 'http://127.0.0.1:8080',
+      description: 'Your own engine (npm start). No ceilings, and the only place /v1/play and /v1/stream work.'
+    }
   ],
 
   tags: [
@@ -255,7 +295,8 @@ you need a true one.`,
               }
             }
           },
-          400: { $ref: '#/components/responses/BadRequest' }
+          400: { $ref: '#/components/responses/BadRequest' },
+          429: { $ref: '#/components/responses/RateLimited' }
         }
       }
     },
@@ -282,7 +323,8 @@ you need a true one.`,
               }
             }
           },
-          400: { $ref: '#/components/responses/BadRequest' }
+          400: { $ref: '#/components/responses/BadRequest' },
+          429: { $ref: '#/components/responses/RateLimited' }
         }
       }
     },
@@ -307,7 +349,8 @@ next candidate is already selected.`,
               }
             }
           },
-          400: { $ref: '#/components/responses/BadRequest' }
+          400: { $ref: '#/components/responses/BadRequest' },
+          501: { $ref: '#/components/responses/NotHosted' }
         }
       }
     },
@@ -402,7 +445,8 @@ whole file rather than the last 500 bytes. Ask for an explicit start offset.`,
 
 This is the response between \`POST /v1/play\` and \`status: "playing"\`, so
 poll \`/v1/status\` rather than treating it as an error.`
-          }
+          },
+          501: { $ref: '#/components/responses/NotHosted' }
         }
       }
     },
@@ -484,6 +528,31 @@ real and freely redistributable to point a probe at.`,
 
   components: {
     responses: {
+      RateLimited: {
+        description: `**Hosted only.** More than 60 requests in a minute from one address.
+Retry after the window, or run your own engine — it has no limit.`,
+        headers: {
+          'Retry-After': { schema: { type: 'string' }, description: 'Seconds to wait.' }
+        },
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { error: { type: 'string' }, detail: { type: 'string' } } },
+            example: { error: 'rate limit exceeded' }
+          }
+        }
+      },
+      NotHosted: {
+        description: `**Hosted only.** This route moves file bytes and is not relayed through the
+edge — it would put a media stream on Cloudflare's network for content fetched
+from strangers, and it defeats the point of a peer-to-peer transfer. Run your
+own engine and the route works normally.`,
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { error: { type: 'string' }, detail: { type: 'string' } } },
+            example: { error: 'not available through the hosted API' }
+          }
+        }
+      },
       BadRequest: {
         description: `Malformed body, or no usable candidate in it. Every failure here is a
 single \`error\` string; nothing partially succeeds.

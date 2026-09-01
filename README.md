@@ -1,8 +1,9 @@
 <div align="center">
 
-# swarm-scout
+# swarmproof
 
-**Given several torrents for the same thing, which one will actually play?**
+**Proves a BitTorrent swarm is alive by pulling the torrent from a real peer —
+instead of trusting a seeder count that nothing ever checked.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2018-339933?logo=node.js&logoColor=white)](package.json)
@@ -12,20 +13,33 @@
 
 ---
 
-## The problem
-
-A torrent's advertised seeder count is whatever a tracker last recorded, often
-hours ago, and half the swarms behind those numbers are dead. If you have five
-magnets for one film and you pick wrong, you find out thirty seconds into a
-stall. Every torrent client's answer to "which of these is alive" is to add
-them all and watch.
-
-swarm-scout answers it directly: probe the candidates in parallel, rank them on
-live signals, hand back a sorted list. It is a **peer-discovery layer** — no
-indexer, no catalogue, no content, and no way to search for a title by name.
-You bring the infohash.
-
 ## What it does
+
+Give it an infohash. It opens a real connection to a real peer, asks for the
+torrent, and checks that `SHA1(info)` matches what you asked for. If that
+succeeds the swarm is **provably** alive — not reported alive, proven.
+
+That distinction is the entire point. A tracker scrape returns a number with no
+addresses behind it and nothing verifies it. Measured against the live network,
+an infohash that **has never existed** reported 45 seeders and 459 leechers,
+because hundreds of broken clients announce to that placeholder hash — and it
+out-scored a torrent that streams fine. Any system treating seeder counts as
+liveness will happily show that hash a green badge.
+
+swarmproof returns four verdicts instead, so a caller can tell what was
+established from what was merely claimed:
+
+| verdict | meaning |
+|---|---|
+| `verified` | a peer served the real torrent, SHA1-matched — cannot be faked |
+| `reachable` | peer addresses found, none served metadata |
+| `claimed` | trackers report a swarm, no address was obtained |
+| `none` | no signal anywhere |
+
+It is a **peer-discovery layer** — no indexer, no catalogue, no content, and no
+way to search for a title by name. You bring the infohash.
+
+## The four capabilities
 
 **Ranks candidate swarms.** A tracker scrape (BEP 15) and a live DHT
 `get_peers` lookup per candidate, each under its own deadline, scored on
@@ -46,7 +60,15 @@ with no website in the loop, at ~630 named torrents per minute.
 between clients — swarm health and live DHT bootstrap nodes. Unset, the client
 behaves exactly as it does offline. It accelerates; it is never a dependency.
 
-**HTTP API reference: [swarm-scout-docs.hassen-ben-mbarek.workers.dev](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev)**
+**Try it without installing anything:**
+
+```bash
+curl -X POST https://swarmproof-api.hassen-ben-mbarek.workers.dev/v1/assess \
+  -H 'content-type: application/json' \
+  -d '{"presets":true}'
+```
+
+**HTTP API reference: [swarmproof-docs.hassen-ben-mbarek.workers.dev](https://swarmproof-docs.hassen-ben-mbarek.workers.dev)**
 — OpenAPI 3.1, with the raw spec at `/openapi.json` if you would rather
 generate a client than read prose. Embedding it in a Node process instead:
 [As a library](#as-a-library).
@@ -93,12 +115,20 @@ one, or holds a list of swarms and needs to know which are still alive.
 > application is often one nobody wrote down. If yours is not here, that is
 > much more likely a gap in the list than a limit of the tool. Read
 > [As a library](#as-a-library) and the
-> [API reference](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev), then
+> [API reference](https://swarmproof-docs.hassen-ben-mbarek.workers.dev), then
 > judge it against your own problem.
 
 ---
 
 ## Quick start
+
+There is a hosted engine at
+`https://swarmproof-api.hassen-ben-mbarek.workers.dev` — no key, no signup.
+It is rate-limited to 60 requests a minute per address, caps a request at 20
+candidates, and does not serve `/v1/play` or `/v1/stream`, because those move
+file bytes and a shared box should not be moving them on your behalf. For
+anything beyond trying it out, run your own; the limits exist to protect one
+t3.small, not to gate a feature.
 
 ```bash
 npm install
@@ -137,7 +167,7 @@ and no address was obtained: **not the same as dead**, because some healthy
 swarms have no reachable DHT presence at all. `none` means nothing anywhere.
 Results sort by verdict tier first, score second, so nothing unproven outranks
 something proven. Full contract in the
-[API reference](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev).
+[API reference](https://swarmproof-docs.hassen-ben-mbarek.workers.dev).
 
 No authentication — it binds loopback and holds nothing private. Exposing it
 takes `ENGINE_HOST=0.0.0.0 ENGINE_ALLOW_PUBLIC=1`, deliberately explicit,
@@ -160,12 +190,12 @@ because a public bind is a torrent client anyone who finds the port can drive.
 ## As a library
 
 The HTTP routes are documented in full at the
-[API reference](https://swarm-scout-docs.hassen-ben-mbarek.workers.dev). This
+[API reference](https://swarmproof-docs.hassen-ben-mbarek.workers.dev). This
 is the other half: the same capabilities inside a Node process, which is what
 [`server.js`](server.js) itself calls.
 
 ```js
-import SwarmScout from 'swarm-scout'          // or './swarmScout.js'
+import SwarmScout from 'swarmproof'          // or './swarmScout.js'
 import { parseInput } from './catalog.js'
 
 const scout = await SwarmScout.create()
@@ -616,10 +646,10 @@ as it does with a full one. Copy [`.env.example`](.env.example) to `.env`.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SWARM_SCOUT_API` | unset | Control-plane endpoint. Unset = fully local |
-| `SWARM_SCOUT_MEMBERS` | unset | `host:port,…` roster; switches to direct fleet probing |
-| `SWARM_SCOUT_MODE` | `dht` | `fleet` forces the member roster as the peer source |
-| `SWARM_SCOUT_LOCAL_CIDRS` | unset | `10.4.1.,10.4.2.` prefixes treated as rack-local |
+| `SWARMPROOF_API` | unset | Control-plane endpoint. Unset = fully local |
+| `SWARMPROOF_MEMBERS` | unset | `host:port,…` roster; switches to direct fleet probing |
+| `SWARMPROOF_MODE` | `dht` | `fleet` forces the member roster as the peer source |
+| `SWARMPROOF_LOCAL_CIDRS` | unset | `10.4.1.,10.4.2.` prefixes treated as rack-local |
 | `ENGINE_PORT` | `8080` | HTTP API port |
 | `ENGINE_HOST` | `127.0.0.1` | Bind address for the HTTP API |
 | `ENGINE_ALLOW_PUBLIC` | unset | Required to bind anything other than loopback |
@@ -677,10 +707,10 @@ comment next to it:
 
 ## Supporting this
 
-The shared control plane at `swarm-scout-control.workers.dev` and the API
-reference at `swarm-scout-docs.workers.dev` are **running at my own expense**.
+The shared control plane at `swarmproof-control.workers.dev` and the API
+reference at `swarmproof-docs.workers.dev` are **running at my own expense**.
 Nothing here requires them — the client is fully functional with
-`SWARM_SCOUT_API` unset, and the engine never becomes a dependency on
+`SWARMPROOF_API` unset, and the engine never becomes a dependency on
 infrastructure I pay for. But keeping them up for everyone else costs real
 money, and it scales with how many people use it.
 

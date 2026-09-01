@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "swarm-scout-control",
+  "name": "swarmproof-control",
   "main": "src/index.js",
   "compatibility_date": "2026-08-30",
 
