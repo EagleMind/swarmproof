@@ -439,6 +439,49 @@ async function aggregateNodes (env) {
   }
   const keysScanned = names.length
 
+  // Read the contributions, in parallel batches.
+  //
+  // This step was missing, and its absence was invisible from the outside:
+  // the sweep above counted keys correctly and reported them as
+  // `contributions`, so /v1/status showed 30 contributions against a pool of
+  // 0 nodes and looked like a network with nothing to offer rather than an
+  // aggregator that never opened an envelope.
+  //
+  // Batched rather than one Promise.all over everything: KV reads are I/O so
+  // they parallelise well, but a few thousand simultaneous subrequests is its
+  // own failure mode.
+  const BATCH = 50
+  for (let i = 0; i < names.length; i += BATCH) {
+    const batch = names.slice(i, i + BATCH)
+    const bodies = await Promise.all(
+      batch.map(name => env.SWARM_KV.get(name, 'json').catch(() => null))
+    )
+
+    for (const body of bodies) {
+      if (!Array.isArray(body?.nodes)) continue
+
+      // One contribution is one source, however many times it repeats a
+      // node inside itself. That is the whole Sybil property: agreement is
+      // counted across distinct contributor keys, so a client cannot
+      // manufacture it by listing the same address twice.
+      const distinct = new Set()
+      for (const n of body.nodes) {
+        if (!n || typeof n.host !== 'string' || !Number.isInteger(n.port)) continue
+        distinct.add(`${n.host}:${n.port}`)
+      }
+
+      for (const key of distinct) {
+        const prior = seen.get(key)
+        if (prior) {
+          prior.sources += 1
+          prior.lastSeen = Math.max(prior.lastSeen, body.ts || now)
+        } else {
+          const [host, port] = [key.slice(0, key.lastIndexOf(':')), Number(key.slice(key.lastIndexOf(':') + 1))]
+          seen.set(key, { host, port, sources: 1, lastSeen: body.ts || now })
+        }
+      }
+    }
+  }
 
   const all = [...seen.values()]
   const corroborated = all.filter(n => n.sources >= MIN_DISTINCT_SOURCES)
