@@ -53,7 +53,28 @@ const DHT_WINDOW_MS = 900      // how long to collect DHT peers once the lookup 
  */
 const VERIFY_DHT_WINDOW_MS = 5000
 const DHT_BOOTSTRAP_TIMEOUT_MS = 15000
-const MAX_CACHED_BOOTSTRAP = 50 // cached nodes to try before the public bootstrap domains
+/**
+ * Cached nodes folded into the bootstrap array.
+ *
+ * Was 50, and 50 was actively harmful. Measured twice on the hosted engine:
+ * with a full cached table every lookup returned 0 peers and every candidate
+ * came back `claimed`; deleting the cache and restarting took the same lookup
+ * to 399 DHT peers and `verified`. Ordering the public domains first was not
+ * sufficient on its own.
+ *
+ * The mechanism is a feedback loop rather than simple staleness.
+ * `_persistNodes()` writes back `dht.toJSON().nodes` — the whole in-memory
+ * table, including entries that were bootstrapped from the previous cache and
+ * have never answered since. That refreshes their `seen` timestamp, so the
+ * LRU ordering the cache uses can never age them out, and a table that has
+ * gone bad stays bad across every restart.
+ *
+ * A smaller number bounds how much of the bootstrap a poisoned cache can
+ * occupy while keeping the warm-start benefit that motivated caching at all.
+ * It is a bound, not a cure: the real fix is to persist only nodes observed
+ * answering, so `seen` means what it says.
+ */
+const MAX_CACHED_BOOTSTRAP = 10
 const MAX_SHARED_BOOTSTRAP = 50 // shared nodes to fold in on a cold start
 const SHARED_HEALTH_MAX_AGE_MS = 600_000 // shared health older than this is re-probed
 
