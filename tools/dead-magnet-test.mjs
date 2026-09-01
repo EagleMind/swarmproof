@@ -76,31 +76,40 @@ async function main () {
   check('rank() returned instead of throwing', !!r, `score=${r.score} peers=${r.peers?.length || 0} in ${rankMs}ms`)
   check('no peers invented', (r.peers?.length || 0) === 0, `${r.peers?.length || 0} peers`)
 
-  // KNOWN DEFECT - this check is expected to fail until the scoring model
-  // decides what to do about it. Left failing on purpose: it is the
-  // regression test for the fix, and deleting it would delete the finding.
+  // rank() cannot separate this from a healthy swarm, and that is permanent.
   //
   // The all-zero infohash is the junk drawer of the BitTorrent network.
-  // Broken clients announce to it constantly, so trackers hold real
-  // announce counts for it - measured here at 43 seeders / 487 leechers,
-  // scoring 917. That is higher than Cosmos Laundromat (634), a torrent
-  // that genuinely plays. Nothing can ever be downloaded from this hash:
-  // stage 3 below confirms it, taking 25s to give up.
+  // Broken clients announce to it constantly, so trackers hold real announce
+  // counts for it and the DHT holds real addresses - measured at 40 claimed
+  // seeders and 559 observed peers in one call, more peers than any genuine
+  // film alongside it. A tracker scrape and a DHT lookup are the only signals
+  // rank() has, and both of them say healthy. No weighting of those two
+  // numbers can fix that, because the numbers are not wrong: people really
+  // are announcing to this hash. There is simply nothing behind it.
   //
-  // The cause is that the score adds two signals of very different
-  // standing. Scrape counts are unverified hearsay from a third party;
-  // DHT peers are addresses we can actually open a socket to. Here they
-  // disagree completely - 530 claimed, 0 real - and the formula has no way
-  // to express that, so the hearsay wins outright.
-  //
-  // The obvious mitigation is not available: damping a swarm whose DHT
-  // lookup came back empty would be wrong, because the 1500ms window
-  // routinely returns 0 for healthy swarms too. Big Buck Bunny scored 2519
-  // on dhtCount 0 in the same session and plays fine. So "no DHT peers"
-  // does not separate junk from real, and a narrower rule is needed.
-  check('a torrent that cannot exist does not score as healthy', r.score === 0,
-    `score=${r.score} from ${r.sources.seeders} claimed seeders / ${r.sources.leechers} leechers, ` +
-    `against ${r.sources.dhtCount} real DHT peers`)
+  // So this is recorded rather than asserted. The resolution is one layer up.
+  console.log(`  note  rank() scores this ${r.score} on ${r.sources.seeders} claimed ` +
+    `seeders / ${r.sources.dhtCount} DHT peers - indistinguishable from real, by design`)
+
+  // assess() CAN separate it, and must. This is the regression test for the
+  // scoring defect: ask a real sample of peers, and when none of them has the
+  // torrent, that is evidence against the tracker's number rather than an
+  // absence of evidence for it.
+  console.log('\n[1b] Refutation')
+  const [assessed] = await scout.assess([c], { deadlineMs: 25_000, maxPeers: 40 })
+
+  check('assess() refutes a hash nobody can serve',
+    assessed.refuted === true,
+    `refuted=${assessed.refuted} verdict=${assessed.verdict} peers=${assessed.peers?.length || 0} ` +
+    `timedOut=${assessed.verifyTimedOut}`)
+
+  check('refutation damps the score',
+    assessed.refuted ? assessed.score < assessed.rawScore : false,
+    `${assessed.rawScore} -> ${assessed.score}`)
+
+  check('the damped score is auditable',
+    typeof assessed.rawScore === 'number' && assessed.rawScore >= assessed.score,
+    `rawScore=${assessed.rawScore} kept alongside score=${assessed.score}`)
 
   // The point of the 13-tracker list: 8 or so are dead hostnames. If the
   // scrape were serial, or waited on every tracker, this would be the

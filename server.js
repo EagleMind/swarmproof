@@ -120,6 +120,11 @@ function view (r) {
     verdict: r.verdict,
     verified: r.verified,
     score: r.score,
+    // Both surfaced so a damped score is auditable rather than mysterious:
+    // `refuted` says we asked a real sample of peers and none had it, and
+    // `rawScore` is what the score would have been without that finding.
+    refuted: r.refuted ?? null,
+    rawScore: r.rawScore ?? r.score,
     source: r.source || 'probed',
     claimed: { seeders: r.sources?.seeders ?? 0, leechers: r.sources?.leechers ?? 0 },
     observed: { peers: r.peers?.length ?? 0, dhtCount: r.sources?.dhtCount ?? 0 },

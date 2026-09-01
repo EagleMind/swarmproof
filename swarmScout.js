@@ -96,6 +96,27 @@ const SHARED_HEALTH_MAX_AGE_MS = 600_000 // shared health older than this is re-
 const NODE_ANSWERED_WITHIN_MS = 15 * 60 * 1000
 
 /**
+ * Peers that must be asked before a failed verification counts as refutation.
+ *
+ * One address refusing proves nothing — roughly 87% of DHT-supplied addresses
+ * do not complete a TCP connect at all, and of those that do only ~63% serve
+ * metadata. Five is enough that "all of them refused" is a statement about the
+ * swarm rather than about our luck.
+ */
+const REFUTATION_MIN_PEERS = 5
+
+/**
+ * What a refuted candidate's score is multiplied by.
+ *
+ * Not zero. Refutation is strong evidence, not proof: a swarm whose every
+ * reachable peer is mid-handshake, choking, or holding a partial file can
+ * refuse a metadata request and still be alive. Ranking it far below anything
+ * unrefuted while leaving it above an outright dead entry is the honest
+ * ordering, and it keeps the number auditable next to `rawScore`.
+ */
+const REFUTED_SCORE_FACTOR = 0.1
+
+/**
  * In-flight KRPC queries allowed on the shared DHT socket.
  *
  * k-rpc's own default is 16. See the DHT construction in the constructor for
@@ -803,10 +824,47 @@ export default class SwarmScout {
           ? 'reachable'
           : claimed ? 'claimed' : 'none'
 
+      // Was the claim actively *refuted*, as opposed to merely unproven?
+      //
+      // This is the one condition under which the score may be damped, and
+      // the narrowness is the whole point. The all-zero infohash — the junk
+      // drawer broken clients announce to — is indistinguishable from a
+      // healthy swarm at rank time: measured today it reported 40 seeders and
+      // 559 observed peers, more peers than any real film in the same call,
+      // and out-scored a torrent that streams. Nothing in a scrape or a DHT
+      // lookup separates them.
+      //
+      // Verification does. We asked enough peers, none of them had it, and we
+      // did not run out of budget while asking. That is evidence *against* the
+      // tracker's number rather than an absence of evidence for it.
+      //
+      // Every weaker rule was rejected because it fails the other pole.
+      // Damping on an empty DHT lookup would have damped Big Buck Bunny,
+      // which scored 2519 on `dhtCount: 0` and streamed 276MB fine. Damping
+      // on a low peer count would damp small healthy swarms. Damping on a
+      // timeout would punish slow swarms for our own deadline. So all three
+      // guards below are load-bearing:
+      //
+      //   verify         - we actually tried; `verify: false` proves nothing
+      //   !timedOut      - we finished asking, rather than gave up
+      //   peers >= N     - we asked a real sample, not one unlucky address
+      const refuted = verify && !meta?.ok && !timedOut && peers.length >= REFUTATION_MIN_PEERS
+
       return {
         ...r,
         verdict,
         verified: verdict === 'verified',
+        // Claims are hearsay by construction, and a refuted candidate's
+        // claims are hearsay that has now been contradicted. Keeping them at
+        // full weight is what let a hash that has never existed rank above
+        // real content. The observed half is damped too: peers announcing to
+        // a hash are not evidence the content behind it exists, which is
+        // precisely what those 559 addresses demonstrate.
+        score: refuted ? Math.round(r.score * REFUTED_SCORE_FACTOR) : r.score,
+        // Surfaced rather than applied silently, so a caller that disagrees
+        // with the policy can reconstruct the original and apply its own.
+        refuted,
+        rawScore: r.score,
         // A `reachable` that ran out of budget is a different claim from one
         // where every peer was asked and refused. Callers re-probing on a
         // schedule should not count the first as evidence of anything.
@@ -825,8 +883,24 @@ export default class SwarmScout {
     // error — it would bury a healthy tracker-only swarm under anything the
     // DHT happened to answer for. Tiers keep both from happening: nothing
     // unproven can outrank something proven, and nothing loses its score.
-    const rankOf = { verified: 0, reachable: 1, claimed: 2, none: 3 }
-    assessed.sort((a, b) => rankOf[a.verdict] - rankOf[b.verdict] || b.score - a.score)
+    // Tiers, ordered by how much was actually established.
+    //
+    // The subtle one is refuted `reachable`, which sits *below* `claimed`.
+    // On the face of it that inverts the verdicts — reachable found peer
+    // addresses and claimed found none — but the tiers rank evidence, not
+    // activity. `claimed` means we could not check. Refuted means we did
+    // check, asked a real sample of peers, and none of them had it. Having
+    // looked and found nothing is a worse sign than not having looked, and
+    // ordering them the other way is what let the all-zero infohash sit
+    // above healthy tracker-only torrents.
+    const tierOf = r => {
+      if (r.verdict === 'verified') return 0
+      if (r.verdict === 'reachable') return r.refuted ? 3 : 1
+      if (r.verdict === 'claimed') return 2
+      return 4
+    }
+
+    assessed.sort((a, b) => tierOf(a) - tierOf(b) || b.score - a.score)
     return assessed
   }
 
