@@ -1,7 +1,11 @@
 # Deploying a hosted engine
 
-What is actually running behind
-`https://swarmproof-api.hassen-ben-mbarek.workers.dev`, and how to rebuild it.
+How the public deployment was built, and how to rebuild it.
+
+> **Nothing described here is currently running.** It was live for a period and
+> was taken down deliberately — see [Status](../README.md#status). This is a
+> runbook, not a description of a running system. Every command below worked as
+> written; the addresses and identifiers are gone.
 
 You do not need any of this to use swarmproof. `npm start` gives you the same
 engine on your own machine with no ceilings. This directory is for standing up

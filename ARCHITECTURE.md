@@ -32,9 +32,15 @@ between clients that already did that work.
 
 ## 1a. The front door, and why it is not part of the engine
 
-Everything above describes software you run. The hosted endpoint at
-`swarmproof-api.hassen-ben-mbarek.workers.dev` is something else: one
-instance of that software, made safe to expose.
+Everything above describes software you run. This section describes something
+else: one instance of it, made safe to expose.
+
+**It is no longer deployed.** It ran as a public endpoint for a period and was
+taken down — a public engine puts its operator's address into every swarm a
+stranger names, and that exposure is not worth carrying for a demo. The code
+(`worker-api/`) and the runbook (`deploy/README.md`) are kept because the
+shape of the problem is the interesting part, and because standing one up
+again is a `wrangler deploy` away.
 
 ```
 caller
@@ -143,7 +149,7 @@ help — and ranking is what gates playback (§6).
 
 ## 4. Worker API
 
-Deployed at `https://swarmproof-control.hassen-ben-mbarek.workers.dev`.
+Deployed at a `*.workers.dev` subdomain when it is running. Not currently deployed; `npm run worker:deploy` stands it back up.
 
 | Route | Purpose |
 |---|---|
@@ -649,7 +655,7 @@ npm run worker:deploy
 ```
 
 ```bash
-npm run bench -- --api https://swarmproof-control.hassen-ben-mbarek.workers.dev
+npm run bench -- --api https://<your-control-plane>.workers.dev
 ```
 
 Point the client at the control plane with `SWARMPROOF_API`; unset, it is

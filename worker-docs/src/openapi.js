@@ -167,22 +167,27 @@ catalogue; this is the discovery layer underneath one. You bring the infohash.
 > [the crawler section of the README](https://github.com/EagleMind/swarmproof#the-crawler)
 > and §8 of ARCHITECTURE.md.
 
-### Two ways to call this
+### The engine runs on your machine
 
-**Hosted** — \`https://swarmproof-api.hassen-ben-mbarek.workers.dev\`. No
-signup, no API key, nothing to configure. Start here.
+**There is no hosted endpoint.** An engine is a BitTorrent client: it opens TCP
+connections to strangers, and whoever runs it is the address in the swarm. So
+you run it, and these routes answer on your own \`localhost\`.
 
 \`\`\`bash
-curl -X POST https://swarmproof-api.hassen-ben-mbarek.workers.dev/v1/assess \\
+npm install && npm start
+
+curl -X POST http://127.0.0.1:8080/v1/assess \\
   -H 'content-type: application/json' \\
   -d '{"input":"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10"}'
 \`\`\`
 
-**Self-hosted** — \`npm install && npm start\`, and the same routes answer on
-\`http://127.0.0.1:8080\`. Choose this when you need the streaming routes, want
-no ceilings, or would rather your own address be the one in the swarm.
+This did run as a public API for a period, behind a Worker that added rate
+limits and request caps. That front door is in \`worker-api/\` and the runbook
+is in \`deploy/\`; it was taken down because a shared engine puts its operator
+into every swarm a stranger names. The ceilings described below are marked
+**Hosted** and apply only if you stand one up yourself.
 
-### What the hosted endpoint limits, and why
+### What a hosted deployment limits, and why
 
 An engine is a BitTorrent client. Every request makes a real machine open real
 connections to strangers, and the address that joins the swarm belongs to
@@ -235,12 +240,8 @@ So \`score\` orders candidates; it does not tell you a torrent is alive. Only
 
   servers: [
     {
-      url: 'https://swarmproof-api.hassen-ben-mbarek.workers.dev',
-      description: 'Hosted. No key required; rate-limited, and the streaming routes are not available here.'
-    },
-    {
       url: 'http://127.0.0.1:8080',
-      description: 'Your own engine (npm start). No ceilings, and the only place /v1/play and /v1/stream work.'
+      description: 'Your own engine (npm start). There is no hosted alternative — a public engine puts its operator into every swarm a caller names.'
     }
   ],
 

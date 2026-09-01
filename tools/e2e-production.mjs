@@ -9,8 +9,9 @@
 // status, and the latency. Nothing is mocked; every figure it prints was
 // measured against the live BitTorrent network on the far side of the door.
 //
-//   npm run e2e
-//   node tools/e2e-production.mjs --api http://127.0.0.1:8080   # your own engine
+//   npm start                      # in one terminal
+//   npm run e2e                    # in another
+//   node tools/e2e-production.mjs --api https://your-deployment  # a hosted one
 //   node tools/e2e-production.mjs --compact                     # elide long bodies
 //   node tools/e2e-production.mjs --rate-limit                  # burn the 60/min budget
 //   node tools/e2e-production.mjs --no-color > run.log          # for a file or CI
@@ -29,9 +30,12 @@ const opt = (name, fallback) => {
   return i !== -1 && args[i + 1] ? args[i + 1] : fallback
 }
 
-const API = (opt('api', 'https://swarmproof-api.hassen-ben-mbarek.workers.dev')).replace(/\/+$/, '')
-const DOCS = (opt('docs', 'https://swarmproof-docs.hassen-ben-mbarek.workers.dev')).replace(/\/+$/, '')
-const CONTROL = (opt('control', 'https://swarmproof-control.hassen-ben-mbarek.workers.dev')).replace(/\/+$/, '')
+// Defaults to a local engine, because there is no hosted endpoint any more.
+// Point it at one with --api if you deploy your own; the hosted-only stages
+// (ceilings, edge cache, supporting services) switch on automatically.
+const API = (opt('api', 'http://127.0.0.1:8080')).replace(/\/+$/, '')
+const DOCS = (opt('docs', '')).replace(/\/+$/, '')
+const CONTROL = (opt('control', '')).replace(/\/+$/, '')
 
 const COMPACT = flag('compact')
 const BODY_LIMIT = Number(opt('max-body', COMPACT ? 300 : 100000))
@@ -424,10 +428,10 @@ if (HOSTED && flag('rate-limit')) {
  * 9. The rest of the deployment
  * ------------------------------------------------------------------ */
 
-if (HOSTED) {
+if (HOSTED && (DOCS || CONTROL)) {
   heading('9. Supporting services')
 
-  {
+  if (DOCS) {
     const r = await request(`${DOCS}/openapi.json`, { timeoutMs: 20000, label: 'published OpenAPI spec' })
     const spec = r.json
     record('docs serve the spec', r.status === 200 && spec?.openapi === '3.1.0', spec?.info?.title)
@@ -440,7 +444,7 @@ if (HOSTED) {
       advertised.join(' '))
   }
 
-  {
+  if (CONTROL) {
     const r = await request(`${CONTROL}/v1/status`, { timeoutMs: 20000, label: 'shared health and node pool' })
     const st = r.json
     record('control plane answers', r.status === 200 && st !== null,

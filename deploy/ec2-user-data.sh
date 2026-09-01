@@ -11,7 +11,10 @@
 #
 set -euxo pipefail
 
-CONTROL_PLANE="${CONTROL_PLANE:-https://swarmproof-control.hassen-ben-mbarek.workers.dev}"
+# No default: there is no shared control plane. Set CONTROL_PLANE to your own
+# `npm run worker:deploy` output to enable shared health, or leave it unset and
+# the engine runs fully local.
+CONTROL_PLANE="${CONTROL_PLANE:-}"
 
 dnf update -y
 dnf install -y docker git nginx

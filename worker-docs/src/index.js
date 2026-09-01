@@ -52,10 +52,10 @@ const page = origin => `<!doctype html>
 </head>
 <body>
 <div class="banner">
-  <strong>Live at <code>swarmproof-api.hassen-ben-mbarek.workers.dev</code></strong>
-  — no key, no signup. Rate-limited to 60 requests a minute because every call
-  puts one real machine into a real swarm; the streaming routes are self-host
-  only. Run your own with <code>npm start</code> for no ceilings.
+  <strong>The engine runs on your machine.</strong>
+  There is no hosted endpoint — it is a BitTorrent client, so whoever runs it
+  is the address in the swarm. Start it with <code>npm start</code> and these
+  routes answer on <code>http://127.0.0.1:8080</code>.
   <a href="/openapi.json">openapi.json</a>
 </div>
 <script id="api-reference" data-url="${origin}/openapi.json"></script>

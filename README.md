@@ -20,8 +20,9 @@ git clone https://github.com/EagleMind/swarmproof.git
 cd swarmproof && npm install && npm run prove-it
 ```
 
-It runs against the hosted API, so nothing needs to be configured and no
-engine needs to be running.
+No server, no signup, no configuration. It builds an engine in process, talks
+to the live BitTorrent network from your machine, and tears it down. Takes
+about fifteen seconds, most of which is the DHT bootstrapping cold.
 
 Two infohashes. One is a real film. The other has never existed — it is the
 junk drawer of the BitTorrent DHT, and broken clients announce to it around
@@ -112,13 +113,13 @@ way to search for a title by name. You bring the infohash.
 
 ## Quick start
 
-There is a hosted engine at
-`https://swarmproof-api.hassen-ben-mbarek.workers.dev` — no key, no signup.
-It is rate-limited to 60 requests a minute per address, caps a request at 20
-candidates, and does not serve `/v1/play` or `/v1/stream`, because those move
-file bytes and a shared box should not be moving them on your behalf. For
-anything beyond trying it out, run your own; the limits exist to protect one
-t3.small, not to gate a feature.
+**There is no hosted endpoint.** This ran as a public API for a while and the
+deployment is documented in [`deploy/`](deploy/README.md), including the
+Worker front door in [`worker-api/`](worker-api/src/index.js) that fronted it.
+It was taken down deliberately: an engine is a BitTorrent client, so whoever
+runs it is the address in every swarm a caller asks about, and that is not a
+liability worth carrying for a demo. Run your own — it is one command and it
+has no ceilings.
 
 ```bash
 npm install
@@ -150,8 +151,9 @@ const scout = await SwarmScout.create()
 const [best] = await scout.assess(candidates)   // verdict, meta, score
 ```
 
-Full contract in the
-[API reference](https://swarmproof-docs.hassen-ben-mbarek.workers.dev).
+Full contract in the OpenAPI 3.1 spec at
+[`worker-docs/src/openapi.js`](worker-docs/src/openapi.js) — hand-written, and
+servable with `npm run docs:dev` if you want it rendered.
 
 No authentication — it binds loopback and holds nothing private. Exposing it
 takes `ENGINE_HOST=0.0.0.0 ENGINE_ALLOW_PUBLIC=1`, deliberately explicit,
@@ -175,9 +177,9 @@ because a public bind is a torrent client anyone who finds the port can drive.
 
 ## As a library
 
-The HTTP routes are documented in full at the
-[API reference](https://swarmproof-docs.hassen-ben-mbarek.workers.dev). This
-is the other half: the same capabilities inside a Node process, which is what
+The HTTP routes are documented in full in
+[`worker-docs/src/openapi.js`](worker-docs/src/openapi.js). This is the other
+half: the same capabilities inside a Node process, which is what
 [`server.js`](server.js) itself calls.
 
 ```js
@@ -699,24 +701,37 @@ comment next to it:
 
 ---
 
-## Supporting this
+## Status
 
-The shared control plane at `swarmproof-control.workers.dev` and the API
-reference at `swarmproof-docs.workers.dev` are **running at my own expense**.
-Nothing here requires them — the client is fully functional with
-`SWARMPROOF_API` unset, and the engine never becomes a dependency on
-infrastructure I pay for. But keeping them up for everyone else costs real
-money, and it scales with how many people use it.
+A portfolio project, and honest about it. Everything here runs — there is a
+demo you can execute in one command, a benchmark suite, and an end-to-end
+check — but nothing is hosted and nothing is on call.
 
-If this is useful to you, a donation helps keep them running:
+The three Cloudflare Workers in this repo (`worker/`, `worker-api/`,
+`worker-docs/`) and the EC2 deployment in [`deploy/`](deploy/README.md) were
+all live for a period and were taken down deliberately. Two reasons, in order
+of weight:
+
+**A public engine is a liability, not a feature.** It is a BitTorrent client
+with an HTTP API and no authentication it could reasonably have. Whoever runs
+it puts their address into every swarm a stranger names. Fronting it with rate
+limits and a shared secret bounds the volume, not the exposure.
+
+**It cost about $20 a month**, which is not much for infrastructure and is a
+lot for a demo that a single command reproduces locally.
+
+The code for all of it is still here, because how it was deployed is part of
+the work: the two-plane split, the Worker front door, the Sybil-resistant node
+aggregation, the reasons `/v1/stream` was never proxied through the edge.
+[`deploy/README.md`](deploy/README.md) is a complete runbook if you want to
+stand one up yourself.
+
+If it is useful to you, a tip is welcome and buys nothing — there is no gated
+feature and no infrastructure left to fund:
 
 ```
 bc1qwm633v8fydc0yatxf7mqlyfey7tetzzp94egmt
 ```
-
-Bitcoin (BTC), native SegWit. No obligation, no gated features, and nothing
-about the project changes if you do not — the control plane stays optional
-either way.
 
 ---
 
