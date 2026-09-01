@@ -25,6 +25,7 @@
     "check-bootstrap": "node tools/check-bootstrap.mjs",
     "bench": "node tools/benchmark.mjs",
     "loadtest": "node tools/loadtest.mjs",
+    "e2e": "node tools/e2e-production.mjs",
     "worker:dev": "wrangler dev --config worker/wrangler.jsonc --local --test-scheduled",
     "worker:deploy": "wrangler deploy --config worker/wrangler.jsonc",
     "worker:deploy:staging": "wrangler deploy --config worker/wrangler.jsonc --env staging",
