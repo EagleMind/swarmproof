@@ -113,20 +113,32 @@ export default class SwarmScout {
     this.cloud = opts.cloud || new CloudCache(opts)
     this.dhtReady = null
 
-    // Re-seed from disk *ahead of* the public bootstrap domains, which
-    // is how production clients do it (nodes.dat / dhtnodes.dat): ping
-    // known-good nodes first and treat the hardcoded domains as the
-    // last resort. Putting them in the bootstrap list — rather than
-    // only calling addNode() afterwards — matters because bittorrent-dht
-    // gates its `ready` event on the bootstrap populate() pass. Nodes
-    // added after construction enrich the routing table but do nothing
-    // for time-to-ready.
+    // Re-seed from disk and from shared state, but *behind* the public
+    // bootstrap domains.
+    //
+    // The obvious order is the opposite, and this code used to do it: ping
+    // known-good nodes first and treat the hardcoded domains as a last
+    // resort, the way nodes.dat / dhtnodes.dat clients do. Measured in
+    // production, that is a trap. `k-rpc` caps in-flight queries at 16 for
+    // the entire socket, so 50 cached entries ahead of the public ones means
+    // the public ones are not in the first wave at all — and if the cached
+    // table has gone stale, every one of those 50 costs a timeout before
+    // anything alive is reached. Observed directly on the hosted engine: a
+    // stale 93-node table produced 0-1 peers per lookup, and clearing it took
+    // the same query to 946. Nothing reported an error; the swarms simply
+    // looked dead, which is the failure signature this project keeps hitting.
+    //
+    // Two live domains cost two slots out of sixteen and are re-verified by
+    // `npm run check-bootstrap`. Cached and shared nodes still go in the
+    // bootstrap array rather than a later addNode(), because bittorrent-dht
+    // gates its `ready` event on the populate() pass — they just no longer
+    // get to starve the one entry that is known to answer.
     const cachedNodes = this.cache.getNodes()
     const shared = (opts.sharedNodes || []).slice(0, MAX_SHARED_BOOTSTRAP)
     const bootstrap = [
+      ...(opts.dhtBootstrap || DEFAULT_DHT_BOOTSTRAP),
       ...cachedNodes.slice(0, MAX_CACHED_BOOTSTRAP).map(n => `${n.host}:${n.port}`),
-      ...shared.map(n => `${n.host}:${n.port}`),
-      ...(opts.dhtBootstrap || DEFAULT_DHT_BOOTSTRAP)
+      ...shared.map(n => `${n.host}:${n.port}`)
     ]
     if (cachedNodes.length || shared.length) {
       console.log(`[scout] bootstrapping from ${Math.min(cachedNodes.length, MAX_CACHED_BOOTSTRAP)} cached + ${shared.length} shared + ${(opts.dhtBootstrap || DEFAULT_DHT_BOOTSTRAP).length} public nodes`)
