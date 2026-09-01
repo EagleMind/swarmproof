@@ -69,14 +69,31 @@ const DHT_BOOTSTRAP_TIMEOUT_MS = 15000
  * LRU ordering the cache uses can never age them out, and a table that has
  * gone bad stays bad across every restart.
  *
- * A smaller number bounds how much of the bootstrap a poisoned cache can
- * occupy while keeping the warm-start benefit that motivated caching at all.
- * It is a bound, not a cure: the real fix is to persist only nodes observed
- * answering, so `seen` means what it says.
+ * That loop is now fixed at the source — `_persistNodes()` writes only nodes
+ * observed answering within `NODE_ANSWERED_WITHIN_MS`, so the cache can no
+ * longer refresh a corpse's timestamp.
+ *
+ * The cap stays anyway, smaller than the original 50, because the filter
+ * bounds staleness at write time and cannot bound it at read time: a node
+ * that answered a minute before shutdown can still be gone by the next boot.
+ * Ten is not a compromise on warm-start quality either — a raw bootstrap from
+ * the two public domains alone reached 395 peers in 25 seconds, so ten known
+ * responders is already generous.
  */
 const MAX_CACHED_BOOTSTRAP = 10
 const MAX_SHARED_BOOTSTRAP = 50 // shared nodes to fold in on a cold start
 const SHARED_HEALTH_MAX_AGE_MS = 600_000 // shared health older than this is re-probed
+
+/**
+ * How recently a node must have answered to be worth persisting.
+ *
+ * The cache exists to skip bootstrap on the next start, so the only entries
+ * worth keeping are ones likely to still answer then. Fifteen minutes is
+ * deliberately shorter than a typical uptime: a node that has been silent
+ * that long is not evidence of anything, and writing it back is what created
+ * the loop this filter exists to break.
+ */
+const NODE_ANSWERED_WITHIN_MS = 15 * 60 * 1000
 
 /**
  * In-flight KRPC queries allowed on the shared DHT socket.
@@ -628,10 +645,52 @@ export default class SwarmScout {
    * The contribution lands in its own key server-side, so this never
    * contends with other clients' writes.
    */
+  /**
+   * The nodes that have actually answered us recently.
+   *
+   * `dht.toJSON()` is the obvious source and is the wrong one: it maps the
+   * routing table through a projection that keeps only `{host, port}` and
+   * discards `seen`. Persisting that writes back every address in the table
+   * regardless of whether it has said anything since it was first added,
+   * which is what let a bad routing table survive indefinitely — the write
+   * refreshed each entry's cache timestamp, so the LRU could never age one
+   * out, and the next boot bootstrapped from the same corpses.
+   *
+   * `seen` is a real signal. k-rpc sets it in `onresponse` and nowhere else:
+   * a node enters the table only by replying, and its `seen` only moves
+   * forward when it replies again. Verified on a live table — every entry
+   * carries a numeric `seen`, and `toJSON()` drops all of them.
+   *
+   * Reaching past `toJSON()` into `_rpc.nodes` is reaching for a private
+   * field, so it is guarded: if the shape ever changes under a dependency
+   * bump, fall back to the old behaviour rather than persisting nothing. A
+   * stale table is a bad day; an empty one is a cold start every time.
+   */
+  _responsiveNodes () {
+    const table = this.dht?._rpc?.nodes?.toArray?.()
+
+    if (!Array.isArray(table)) {
+      console.warn('[scout] routing table internals unavailable; persisting unfiltered')
+      return this.dht.toJSON().nodes || []
+    }
+
+    const cutoff = Date.now() - NODE_ANSWERED_WITHIN_MS
+    return table
+      .filter(n => n?.host && n?.port && typeof n.seen === 'number' && n.seen >= cutoff)
+      // Freshest first, so the truncation below keeps the best evidence and
+      // the cache's own LRU ordering agrees with reality.
+      .sort((a, b) => b.seen - a.seen)
+      .map(n => ({ host: n.host, port: n.port }))
+  }
+
   _persistNodes () {
     try {
-      const nodes = this.dht.toJSON().nodes
-      if (nodes?.length) {
+      const nodes = this._responsiveNodes()
+      // Never overwrite a populated cache with nothing. A DHT that has only
+      // just started legitimately has no recent responders yet, and blanking
+      // the cache there would throw away a warm start to record a fact about
+      // our own uptime.
+      if (nodes.length) {
         this.cache.setNodes(nodes)
         this.cloud.reportNodes(nodes.slice(0, 100))
       }
