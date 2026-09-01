@@ -30,6 +30,28 @@ const DEFAULT_BUDGET_MS = 1500 // hard ceiling per candidate probe
 const SCRAPE_TIMEOUT_MS = 1200 // per-tracker ceiling (a hung tracker must not hold the probe)
 const SCRAPE_GRACE_MS = 300    // after the first answer, how long to wait for a better one
 const DHT_WINDOW_MS = 900      // how long to collect DHT peers once the lookup is fired
+
+/**
+ * The DHT window `assess()` uses instead.
+ *
+ * 900ms is the right budget for `rank()`, where the whole promise is a
+ * sub-second decision and a missed peer only costs some ranking accuracy.
+ * It is the wrong budget for verification, and the difference is not
+ * academic: measured on the hosted engine, the first DHT peer for Big Buck
+ * Bunny arrived at 3327ms, so a 900ms window returned nothing and every
+ * candidate came back `claimed` — the verdict meaning "trackers say yes,
+ * nothing was proven".
+ *
+ * That failure is self-reinforcing. No peers means nothing cached, which
+ * means the next lookup starts just as cold, and the persisted routing table
+ * never improves. The engine reports itself healthy throughout.
+ *
+ * Verification already costs seconds by construction, so spending a few of
+ * them finding peers is proportionate — and it is the difference between an
+ * answer and no answer at all. README records the same variance from the
+ * other direction: Sintel's first peer at 430ms, Big Buck Bunny's at 3378ms.
+ */
+const VERIFY_DHT_WINDOW_MS = 5000
 const DHT_BOOTSTRAP_TIMEOUT_MS = 15000
 const MAX_CACHED_BOOTSTRAP = 50 // cached nodes to try before the public bootstrap domains
 const MAX_SHARED_BOOTSTRAP = 50 // shared nodes to fold in on a cold start
@@ -233,7 +255,7 @@ export default class SwarmScout {
    *          Ranked best-first. Empty peers/low score entries are still
    *          included so the caller can decide its own cutoff.
    */
-  async rank (candidates, { sharedFirst = true } = {}) {
+  async rank (candidates, { sharedFirst = true, peerWindowMs = DHT_WINDOW_MS } = {}) {
     const hashes = candidates.map(c => c.infoHash)
 
     // Start the shared lookup before waiting on the DHT: if it covers
@@ -265,7 +287,15 @@ export default class SwarmScout {
     const shared = await sharedPromise
 
     const results = await Promise.allSettled(
-      candidates.map(c => this._withTimeout(this._scoreCandidate(c, shared?.[c.infoHash.toLowerCase()]), this.probeBudgetMs, c))
+      // The per-candidate ceiling has to clear the DHT window it is wrapping,
+      // or a widened window is killed before it can collect anything and the
+      // widening silently does nothing. The extra 600ms covers the tracker
+      // scrape running alongside it.
+      candidates.map(c => this._withTimeout(
+        this._scoreCandidate(c, shared?.[c.infoHash.toLowerCase()], peerWindowMs),
+        Math.max(this.probeBudgetMs, peerWindowMs + 600),
+        c
+      ))
     )
 
     const scored = results.map((r, i) => {
@@ -381,12 +411,12 @@ export default class SwarmScout {
     if (reports.length) this.cloud.reportHealth(reports)
   }
 
-  async _scoreCandidate (candidate, sharedEntry) {
+  async _scoreCandidate (candidate, sharedEntry, peerWindowMs = DHT_WINDOW_MS) {
     const cached = this.cache.get(candidate.infoHash)
 
     const [scrape, dhtPeers] = await Promise.all([
       this._scrapeTrackers(candidate).catch(() => null),
-      this._probePeers(candidate.infoHash).catch(() => [])
+      this._probePeers(candidate.infoHash, peerWindowMs).catch(() => [])
     ])
 
     // Weighted health score. Tune these weights against real traffic;
@@ -647,7 +677,12 @@ export default class SwarmScout {
     // failure looked exactly like a legitimately unprovable swarm.
     //
     // So verification forces a real probe. Ranking keeps its shortcut.
-    const ranked = await this.rank(candidates, { sharedFirst: !verify })
+    const ranked = await this.rank(candidates, {
+      sharedFirst: !verify,
+      // Verification needs addresses more than it needs a fast ranking, and
+      // the 900ms default routinely closes before the first peer arrives.
+      peerWindowMs: verify ? VERIFY_DHT_WINDOW_MS : DHT_WINDOW_MS
+    })
     // Shared across candidates on purpose: address liveness is a property of
     // the address, not of the hash it was found under, so what one candidate
     // learns about a dead peer saves the next one a connection.
